@@ -21,18 +21,28 @@
 import { DATA_SOURCE } from './config.js';
 import { state } from './state.js';
 import { loadFromApi, loadFromTencentDocs } from './adapter.js';
-import { buildWarehouse, renderer, resize, composer } from './scene.js';
-import { updateCamera, stepAnimation } from './camera.js';
+import { buildWarehouse, renderer, resize, composer, canvasHost } from './scene.js';
+import { updateCamera, stepAnimation, flyToOverview } from './camera.js';
 import { locate, resetView } from './emphasis.js';
 import { search } from './search.js';
 import { renderResults } from './panel.js';
 import { initControls } from './controls.js';
 import { initMinimap, sizeMinimap, renderMinimap } from './minimap.js';
+import { toggleMap, enterMap, exitMap, isMapMode, pickOnMap, setMapUiHook, setPickBoxHook } from './mapview.js';
+import { setMapUi, toggleSelInfo } from './panel.js';
 import { exposeApi, exposeError } from './api.js';
+
+/** 判定"轻点"的最大位移（像素）。超过这个距离视为拖拽，不触发地图点选。 */
+const TAP_SLOP = 8;
 
 // ---------------------------------------------------------------------------
 // 界面事件绑定
 // ---------------------------------------------------------------------------
+/** 切换全屏地图（界面同步由 mapview 的回调统一处理） */
+function doToggleMap() {
+  toggleMap();
+}
+
 function bindUi() {
   document.getElementById('search-form').addEventListener('submit', (e) => {
     e.preventDefault();
@@ -46,6 +56,42 @@ function bindUi() {
   });
   document.getElementById('btn-overview')?.addEventListener('click', resetView);
 
+  // ---- 地图：点面包屑 / 点"地图"按钮，都能进出全屏地图 ----
+  const bc = document.getElementById('breadcrumb');
+  if (bc) {
+    bc.addEventListener('click', (e) => { e.stopPropagation(); doToggleMap(); });
+    bc.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); doToggleMap(); }
+    });
+  }
+  document.getElementById('btn-map')?.addEventListener('click', (e) => {
+    e.preventDefault();
+    doToggleMap();
+  });
+
+  // ---- 地图上点一下：镜头飞到那个位置，并回到 3D ----
+  // 注意：拖拽平移也会在抬手时触发 click，所以要先记录按下位置，
+  //       只有位移小于阈值的"轻点"才算点选，避免转地图时误跳。
+  const host = document.getElementById('canvas-host');
+  if (host) {
+    let downAt = null;
+    host.addEventListener('pointerdown', (e) => { downAt = { x: e.clientX, y: e.clientY }; });
+    host.addEventListener('click', (e) => {
+      if (!isMapMode()) return;
+      if (!downAt) return;
+      const moved = Math.hypot(e.clientX - downAt.x, e.clientY - downAt.y);
+      downAt = null;
+      if (moved > TAP_SLOP) return;   // 是拖拽，不是点选
+      pickOnMap(e.clientX, e.clientY, host);
+    });
+  }
+
+  // ---- 详情卡：点标题行展开 / 收起 ----
+  document.getElementById('selinfo-head')?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    toggleSelInfo();
+  });
+
   document.getElementById('search').addEventListener('keydown', (e) => {
     if (e.key === 'Escape') resetView();
   });
@@ -53,6 +99,8 @@ function bindUi() {
   window.addEventListener('keydown', (e) => {
     if (e.target && e.target.id === 'search') return;
     if (e.key === 'r' || e.key === 'R') resetView();
+    if (e.key === 'm' || e.key === 'M') doToggleMap();
+    if (e.key === 'Escape' && isMapMode()) doToggleMap();
     // 以下两个按钮在精简版界面中已移除，?.click() 保证不存在时静默跳过
     if (e.key === 'v' || e.key === 'V') document.getElementById('btn-view')?.click();
     if (e.key === 'l' || e.key === 'L') document.getElementById('btn-labels')?.click();
@@ -152,8 +200,20 @@ async function init() {
   initMinimap();
 
   // 交互与界面
+  // 把"地图状态变化"接到面板文字上：任何进出地图的路径都会自动同步按钮文案，
+  // 不用在每个调用点都记得调一次 setMapUi。
+  setMapUiHook(setMapUi);
+  // 地图上点中箱位时，直接走标准定位流程（和点结果列表同一条路径）
+  setPickBoxHook((boxId) => {
+    const item = state.items.find((it) => it.boxId === boxId);
+    if (item) {
+      locate(item);
+      setMapUi(false);
+    }
+  });
   initControls(renderer.domElement);
   bindUi();
+  setMapUi(false);
   renderResults([], locate);   // 先渲染一次空列表（带提示语）
 
   // 布局与循环

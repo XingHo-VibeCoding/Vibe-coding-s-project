@@ -24,8 +24,10 @@ export const state = {
   marker: null,
   /** 当前高亮的箱位 ID，null 表示无高亮 */
   highlightBoxId: null,
-  /** 是否处于 2D 俯视模式（精简版已移除切换入口，保留状态位以防恢复） */
+  /** 是否处于 2D 俯视模式（全屏地图） */
   topView: false,
+  /** 进入地图前的 3D 视角快照，用于"返回 3D 视角"时还原 */
+  saved3dView: null,
   /** 区域标签是否可见 */
   labelsVisible: true,
   /** 上次搜索是否无结果 */

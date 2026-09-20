@@ -20,8 +20,16 @@ import { FXAAShader } from 'three/addons/shaders/FXAAShader.js';
 import { COLORS, BOX_SIZE, VIEW_CENTER } from './config.js';
 import { state } from './state.js';
 import {
-  ZONES, ZONE_SLOTS, allSlots, positionFor, zoneLabel,
+  ZONES, ZONE_SLOTS, allSlots, positionFor, zoneLabel, SCENE_CENTER,
 } from './layout.js';
+
+/**
+ * 俯视地图的视野半宽 / 半高（世界坐标）。
+ * 半高固定 14，保证三排货架纵向完整入画；
+ * 半宽取 30，保证 A~C 三个区域（X 跨度 44±，留边）横向完整入画。
+ */
+const SCENE_HALF_W = 30;
+const SCENE_HALF_H = 14;
 
 // ---------------------------------------------------------------------------
 // 1. 渲染基建
@@ -41,7 +49,7 @@ export const camera = new THREE.PerspectiveCamera(
   50, host.clientWidth / host.clientHeight, 0.1, 1000
 );
 
-/** 2D 俯视正交相机（精简版未启用切换入口，保留给未来恢复） */
+/** 2D 俯视正交相机（全屏地图）。视野由 syncTopCamBounds() 按画布比例维护。 */
 export const topCam = new THREE.OrthographicCamera(-28, 28, 14, -4, 0.1, 200);
 
 // 后处理：RenderPass（主渲染）+ OutlinePass（高亮发光轮廓）+ FXAA（抗锯齿）
@@ -229,9 +237,40 @@ export function resize() {
   renderer.setSize(w, h);
   camera.aspect = w / h;
   camera.updateProjectionMatrix();
+  syncTopCamBounds(w, h);
   composer.setSize(w, h);
   outline.setSize(w, h);
 
   const dpr = renderer.getPixelRatio();
   fxaa.material.uniforms['resolution'].value.set(1 / (w * dpr), 1 / (h * dpr));
+}
+
+/**
+ * 让俯视正交相机的视野随画布宽高比变化。
+ * 为什么必须做：topCam 的 bounds 是固定的（-28~28 宽、-4~14 高），
+ * 竖屏时画布又窄又高，固定 bounds 会把左右两边裁掉，地图上就看不到 C 区。
+ * 这里保证"横向始终能看到 SCENE_HALF_W"，纵向按比例自然延伸。
+ */
+export function syncTopCamBounds(w = host.clientWidth, h = host.clientHeight) {
+  const aspect = h > 0 ? w / h : 1;
+
+  const halfH = SCENE_HALF_H;
+  const halfW = Math.max(SCENE_HALF_W, halfH * aspect);
+
+  topCam.left = -halfW;
+  topCam.right = halfW;
+  topCam.top = halfH;
+  topCam.bottom = -halfH;
+  topCam.updateProjectionMatrix();
+}
+
+/**
+ * 摆放俯视相机。
+ * 为什么单独抽出来：相机在 y=90 往下看，up 设成 (0,0,-1) 才能让"屏幕上方 = 场景北侧"；
+ * 如果只在 camera.js 每帧设置，地图刚切换的第一帧可能还是旧朝向。
+ */
+export function placeTopCam() {
+  topCam.position.set(0, 90, SCENE_CENTER.z);
+  topCam.up.set(0, 0, -1);
+  topCam.lookAt(0, 0, SCENE_CENTER.z);
 }

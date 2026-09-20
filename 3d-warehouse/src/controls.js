@@ -12,7 +12,7 @@
 // 长按 350ms 后切换到平移，补上这个缺口。
 // ============================================================================
 
-import { LONG_PRESS_MS } from './config.js';
+import { LONG_PRESS_MS, ROTATE_SENSITIVITY } from './config.js';
 import { state } from './state.js';
 import { renderer } from './scene.js';
 import { zoomBy, rotateBy, panBy } from './camera.js';
@@ -31,6 +31,7 @@ export function initControls(dom = renderer.domElement) {
   let pinchDist = 0;          // 双指间距（用于算缩放比例）
   let pressTimer = null;      // 长按计时器
   let longPressPan = false;   // 是否已进入"长按平移"状态
+  let sens = ROTATE_SENSITIVITY.mouse; // 当前指针的旋转灵敏度（按下时确定）
 
   const twoDist = () => {
     const p = [...pointers.values()];
@@ -43,14 +44,31 @@ export function initControls(dom = renderer.domElement) {
   };
 
   function onDown(e) {
-    dom.setPointerCapture?.(e.pointerId);
+    // 兜底自愈：正常情况下 pointerup/cancel 会把触点清掉，
+    // 但如果那一次事件丢了（手指滑出屏幕、被系统手势打断、切后台），
+    // pointers 里会残留"幽灵触点"，导致 pointers.size 一直是 2，
+    // 之后所有单指操作都被当成双指 —— 整个页面就再也转不动了。
+    // 判断依据：primary 触点代表"新一轮操作的开始"，
+    //          此时若还残留别的触点，说明上一轮没干净结束，直接清空。
+    // （双指操作时第二根手指 isPrimary=false，不会误清空）
+    if (e.isPrimary && pointers.size > 0) pointers.clear();
+
+    // 捕获指针，保证手指移出画布后仍能收到 move。
+    // 必须 try/catch：某些环境（合成事件、已释放的 pointerId）会抛 NotFoundError，
+    // 一旦抛出就会中断整个 onDown，导致 mode 没被设置、后面完全转不动。
+    try {
+      dom.setPointerCapture?.(e.pointerId);
+    } catch (_) { /* 捕获失败不影响主流程 */ }
+
     pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
 
     if (pointers.size === 1) {
-      // 右键 或 俯视模式 → 平移；否则旋转
       mode = (e.button === 2 || state.topView) ? 'pan' : 'rotate';
       lastX = e.clientX;
       lastY = e.clientY;
+
+      // 触摸屏旋转更跟手（见 config.ROTATE_SENSITIVITY 的说明）
+      sens = e.pointerType === 'touch' ? ROTATE_SENSITIVITY.touch : ROTATE_SENSITIVITY.mouse;
 
       // 触摸屏单指：按住不动 350ms → 切到平移模式
       if (e.pointerType === 'touch' && !state.topView) {
@@ -92,7 +110,7 @@ export function initControls(dom = renderer.domElement) {
     if (mode === 'rotate' && !state.topView) {
       // 手指/鼠标已经明显移动 → 判定为旋转意图，取消长按计时
       if (pressTimer && (Math.abs(dx) > 2 || Math.abs(dy) > 2)) cancelPress();
-      rotateBy(-dx * 0.005, -dy * 0.005);
+      rotateBy(-dx * sens, -dy * sens);
     } else {
       panBy(dx, dy);
     }

@@ -10,6 +10,9 @@ import { camera, topCam, outline } from './scene.js';
 import { search } from './search.js';
 import { resetView, locate } from './emphasis.js';
 import { isMinimapActive } from './minimap.js';
+import { isMapMode, enterMap, exitMap, toggleMap, screenToGround } from './mapview.js';
+import { isSelInfoExpanded, toggleSelInfo, setMapUi } from './panel.js';
+import { defaultRadiusFor } from './config.js';
 
 const round2 = (arr) => arr.map((n) => +n.toFixed(2));
 
@@ -39,6 +42,14 @@ export function exposeApi() {
         outline: outline.selectedObjects.length,
       };
     },
+    mapMode: () => isMapMode(),
+    mapRadius: () => defaultRadiusFor(camera.aspect),
+    mapBounds: () => ({
+      left: +topCam.left.toFixed(2), right: +topCam.right.toFixed(2),
+      top: +topCam.top.toFixed(2), bottom: +topCam.bottom.toFixed(2),
+      zoom: +topCam.zoom.toFixed(3),
+    }),
+    selExpanded: () => isSelInfoExpanded(),
   };
 
   window.__api = {
@@ -49,6 +60,12 @@ export function exposeApi() {
       if (it) locate(it);
       return !!it;
     },
+    // ---- 地图相关（供自动化测试与调试） ----
+    enterMap: () => { const r = enterMap(); setMapUi(isMapMode()); return r; },
+    exitMap: () => { const r = exitMap(); setMapUi(isMapMode()); return r; },
+    toggleMap: () => { const r = toggleMap(); setMapUi(isMapMode()); return r; },
+    screenToGround: (x, y) => screenToGround(x, y, document.getElementById('canvas-host')),
+    toggleSelInfo,
     toggleLabels: () => document.getElementById('btn-labels')?.click(),
     toggleView: () => document.getElementById('btn-view')?.click(),
     toggleMinimap: () => document.getElementById('btn-minimap')?.click(),
@@ -60,6 +77,7 @@ export function exposeApi() {
         highlightBoxId: state.highlightBoxId,
         nohit: state.nohit,
         topView: state.topView,
+        mapMode: isMapMode(),
         labelsVisible: state.labelsVisible,
         minimapVisible: window.__diag.minimapVisible(),
         cameraPos: window.__diag.cameraPos(),

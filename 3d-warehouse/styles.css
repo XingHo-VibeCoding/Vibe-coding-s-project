@@ -95,15 +95,59 @@ body {
 #canvas-host { position: absolute; inset: 0; }
 #canvas-host canvas { display: block; width: 100% !important; height: 100% !important; }
 
-/* 面包屑（定位路径） */
+/* 面包屑（定位路径）—— 可点击进入全屏地图 */
 .breadcrumb {
   position: absolute; top: 12px; left: 12px; right: 12px; max-width: 760px;
   display: flex; align-items: center; gap: 8px;
   background: rgba(34, 46, 58, 0.92); color: #eaf2f9;
   padding: 9px 12px; border-radius: 7px; font-size: 13px; line-height: 1.4;
   box-shadow: var(--shadow); z-index: 12;
+  cursor: pointer;
+  border: 1px solid transparent;
+  transition: background .12s, border-color .12s;
 }
+.breadcrumb:hover { background: rgba(47, 111, 159, 0.95); border-color: #7fb4dd; }
 .bc-icon { width: 15px; height: 15px; color: #ffce8a; flex: none; }
+.bc-action {
+  margin-left: auto; flex: none; font-size: 12px; color: #cfe3f4;
+  border-left: 1px solid rgba(255,255,255,0.22); padding-left: 10px;
+  white-space: nowrap;
+}
+
+/* 全屏地图模式：地图下所有浮层都收起来，把画布让给地图 */
+body.map-mode .breadcrumb {
+  top: 8px;
+  right: 8px;
+  max-width: none;
+  padding: 7px 10px;
+  font-size: 12px;
+}
+body.map-mode .hint-bar { display: none; }
+body.map-mode .controls { bottom: 12px; }
+
+/* 面包屑默认铺满顶部会挡住货架，这里让它"半透明 + 收窄"。
+   之所以不直接缩到最小：定位路径是用户最需要常看的信息，
+   缩小到刚好一行、并降低不透明度，兼顾可读与不遮挡。 */
+@media (max-width: 820px) {
+  .breadcrumb {
+    background: rgba(34, 46, 58, 0.86);
+    padding: 7px 10px;
+    font-size: 12px;
+    top: 8px;
+    left: 8px;
+    right: 8px;
+  }
+}
+
+/* 地图模式下的操作提示 */
+.map-bar {
+  position: absolute; left: 12px; bottom: 66px;
+  display: flex; align-items: center; gap: 8px;
+  background: rgba(34, 46, 58, 0.9); color: #eaf2f9;
+  padding: 8px 12px; border-radius: 7px; font-size: 12px; line-height: 1.4;
+  box-shadow: var(--shadow); z-index: 12; max-width: calc(100% - 24px);
+}
+.map-bar .mb-icon { width: 14px; height: 14px; color: #ffce8a; flex: none; }
 
 /* 未命中提示 */
 .nohit {
@@ -197,8 +241,23 @@ body {
 }
 
 .selinfo { border-top: 1px solid var(--line); padding: 12px 14px; font-size: 13px; background: #f7f9fb; }
-.sel-head { display: flex; align-items: center; gap: 7px; font-weight: 600; color: var(--accent-ink); margin-bottom: 8px; }
-.sel-icon { width: 16px; height: 16px; color: var(--highlight); }
+.sel-head {
+  display: flex; align-items: center; gap: 7px;
+  font-weight: 600; color: var(--accent-ink); margin-bottom: 8px;
+  cursor: pointer; user-select: none;
+}
+.sel-head:hover { color: var(--accent); }
+.sel-icon { width: 16px; height: 16px; color: var(--highlight); flex: none; }
+.sel-toggle {
+  margin-left: auto; flex: none; font-weight: 400; font-size: 12px;
+  color: var(--accent); border: 1px solid var(--line-strong);
+  background: #fff; border-radius: 5px; padding: 2px 8px;
+}
+/* 收起状态：只剩标题行，把 3D 舞台让出来 */
+.selinfo.collapsed { padding-bottom: 10px; }
+.selinfo.collapsed .sel-head { margin-bottom: 0; }
+.selinfo.collapsed #selinfo-body,
+.selinfo.collapsed #btn-overview { display: none; }
 .selinfo .row { display: flex; justify-content: space-between; gap: 10px; padding: 3px 0; border-bottom: 1px dashed #e4e9ef; }
 .selinfo .row:last-of-type { border-bottom: none; }
 .selinfo .row span:first-child { color: var(--muted); flex: none; }
@@ -214,10 +273,12 @@ body {
   .brand { font-size: 13px; }
   .search-wrap { order: 3; flex-basis: 100%; }
   .demo-flag { margin-left: auto; font-size: 11px; padding: 4px 8px; }
-  .stage { grid-column: 1; grid-row: 2; }
+  .stage { grid-column: 1; grid-row: 2; min-height: 30vh; }
   .panel {
     grid-column: 1; grid-row: 3; border-left: none; border-top: 1px solid var(--line);
-    max-height: 42vh; box-shadow: 0 -2px 10px rgba(20,30,40,0.08);
+    /* 关键：用 max-height 限制上限，同时让内容少时自然缩回，
+       详情卡收起后 3D 舞台能立刻变大 */
+    max-height: 40vh; box-shadow: 0 -2px 10px rgba(20,30,40,0.08);
   }
   .controls .btn { height: 34px; font-size: 12px; padding: 0 10px; }
   .hint-bar { display: none; }
@@ -240,18 +301,36 @@ body {
   #search-form .btn { height: 44px; padding: 0 14px; font-size: 14px; }
 
   /* 底栏结果面板：给手机留更合理的空间比例 */
-  .panel { max-height: 48vh; }
+  .panel { max-height: 40vh; }
   .panel-head { padding: 10px 12px; }
+
+  /* 地图模式下把面板压到最矮，把画面尽可能让给地图。
+     注意：这条必须写在上面的 .panel 规则【之后】，
+     同优先级时后写的生效（CSS 层叠顺序）。 */
+  body.map-mode .panel {
+    max-height: 92px;
+    overflow: hidden;
+  }
+  body.map-mode .results { max-height: 48px; }
+  body.map-mode .selinfo { display: none; }
 
   /* 结果卡片：整行可点，增大点击热区 */
   .result-item, .results > * { border-radius: 10px; }
 
-  /* 左下"全景"按钮：加大触控面积 */
+  /* 左下按钮：加大触控面积 */
   .controls { bottom: 10px; left: 10px; }
   .controls .btn { height: 40px; font-size: 13px; padding: 0 14px; }
 
-  /* 面包屑路径：允许换行，避免长路径被截断 */
-  .breadcrumb { max-width: calc(100% - 20px); white-space: normal; line-height: 1.45; font-size: 12px; }
+  /* 面包屑路径：允许换行，避免长路径被截断；点它进地图 */
+  .breadcrumb {
+    max-width: calc(100% - 20px); white-space: normal;
+    line-height: 1.45; font-size: 12px; padding: 10px 12px;
+  }
+  .bc-action { font-size: 11px; padding-left: 8px; }
+
+  /* 详情卡折叠头：手指友好 */
+  .sel-head { padding: 4px 0; }
+  .sel-toggle { padding: 4px 10px; font-size: 12px; }
 
   /* 空态提示：缩小留白 */
   .nohit { margin: 12px; padding: 12px; }

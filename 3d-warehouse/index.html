@@ -45,9 +45,16 @@
     <main class="stage">
       <div id="canvas-host"></div>
 
-      <div id="breadcrumb" class="breadcrumb hidden" aria-live="polite">
+      <div id="breadcrumb" class="breadcrumb hidden" role="button" tabindex="0"
+           title="点击查看全屏地图" aria-live="polite">
         <i data-lucide="map-pin" class="bc-icon"></i>
         <span id="breadcrumb-text"></span>
+        <span class="bc-action">全屏地图</span>
+      </div>
+
+      <div id="map-bar" class="map-bar hidden">
+        <i data-lucide="hand-pointer" class="mb-icon"></i>
+        <span>点货架定位到那一排，点空地跳过去看</span>
       </div>
 
       <div id="nohit" class="nohit hidden" role="alert">
@@ -58,8 +65,11 @@
         </div>
       </div>
 
-      <!-- 左下视图控制（精简版：仅保留"回到全景"） -->
+      <!-- 左下视图控制 -->
       <div class="controls" role="toolbar" aria-label="视图控制">
+        <button id="btn-map" class="btn" type="button" title="切换全屏地图 (M)">
+          <i data-lucide="map" class="c-icon"></i><span>地图</span>
+        </button>
         <button id="btn-reset" class="btn" type="button" title="回到全景 (R)">
           <i data-lucide="maximize" class="c-icon"></i><span>全景</span>
         </button>
@@ -76,10 +86,11 @@
       <div id="results" class="results">
         <div class="hint">输入物资编号 / 名称 / 区域 / 货架排号 / 箱位开始定位。</div>
       </div>
-      <div id="selinfo" class="selinfo hidden">
-        <div class="sel-head">
+      <div id="selinfo" class="selinfo hidden collapsed">
+        <div id="selinfo-head" class="sel-head" role="button" tabindex="0" title="点击展开 / 收起详情">
           <i data-lucide="package-search" class="sel-icon"></i>
           <span>当前箱位</span>
+          <span id="selinfo-toggle" class="sel-toggle">展开</span>
         </div>
         <div id="selinfo-body"></div>
         <button id="btn-overview" class="btn btn-primary btn-block" type="button">

@@ -11,10 +11,12 @@
 // ============================================================================
 
 import { state } from './state.js';
+import { outline } from './scene.js';
 import {
   renderResults, setResultCount, setNoHit, hideNoHit, hideBreadcrumb, getInputValue,
 } from './panel.js';
 import { locate, resetView } from './emphasis.js';
+import { enterMap } from './mapview.js';
 
 /**
  * 收尾：把命中结果写进列表，并根据数量决定要不要自动定位。
@@ -37,9 +39,51 @@ export function finishSearch(hits) {
   }
 
   renderResults(hits, locate);
+
   // 只命中一条 → 直接飞过去，省掉一次点击
-  if (hits.length === 1) locate(hits[0]);
+  if (hits.length === 1) {
+    locate(hits[0]);
+    return hits;
+  }
+
+  // 命中多条 → 全部打上标记并切到全屏地图，一眼看清分布在哪些区域。
+  // 为什么这么做：手机上列表一次只显示得下一两条，
+  // 而"同一个东西在两三个区都有"恰恰是最需要看空间分布的场合。
+  markAllHits(hits);
+  enterMap();
   return hits;
+}
+
+/**
+ * 给多条命中记录同时打标记（不聚焦某一个，保留全局视野）。
+ * 这里是"轻量高亮"：命中箱位调亮 + 描边，其余压暗，但不动镜头。
+ */
+function markAllHits(hits) {
+  state.highlightBoxId = null;
+  state.nohit = false;
+  const ids = new Set(hits.map((h) => h.boxId));
+
+  for (const mesh of state.slotMeshes) {
+    const m = mesh.material;
+    const isHit = mesh.userData.occupied && ids.has(mesh.userData.boxId);
+    if (isHit) {
+      m.color.setHex(mesh.userData.baseColor);
+      m.opacity = 1;
+      m.transparent = false;
+    } else if (mesh.userData.occupied) {
+      m.color.setHex(mesh.userData.baseColor);
+      m.opacity = 0.18;
+      m.transparent = true;
+    } else {
+      m.opacity = 0.1;
+      m.transparent = true;
+    }
+  }
+
+  // 轮廓高亮所有命中的箱位
+  outline.selectedObjects = hits
+    .map((h) => state.meshes.get(h.boxId))
+    .filter(Boolean);
 }
 
 /**

@@ -7,10 +7,11 @@
 // ============================================================================
 
 import * as THREE from 'three';
-import { DEFAULT_VIEW, VIEW_CENTER, FLY_DURATION } from './config.js';
+import { VIEW_CENTER, FLY_DURATION } from './config.js';
 import { state, view2d } from './state.js';
 import { outline } from './scene.js';
-import { flyTo } from './camera.js';
+import { flyTo, flyToOverview } from './camera.js';
+import { exitMap } from './mapview.js';
 import { positionFor, breadcrumbFor } from './layout.js';
 import {
   showSelInfo, hideSelInfo, hideBreadcrumb, hideNoHit,
@@ -49,6 +50,9 @@ export function setEmphasis(activeBoxId) {
  * @param {object} item 标准结构的物资记录（含 boxId / zone / row / level）
  */
 export function locate(item) {
+  // 如果正在看全屏地图，先退出——用户明确点了某一条，就是要落到 3D 细看
+  if (state.topView) exitMap(false);
+
   state.highlightBoxId = item.boxId;
   state.nohit = false;
   setEmphasis(item.boxId);
@@ -80,13 +84,13 @@ export function resetView() {
   setEmphasis(null);
   outline.selectedObjects = [];
 
+  // 如果正在看全屏地图，先退出（否则全景会飞到看不见的地方）
+  if (state.topView) exitMap(false);
+
   state.marker.position.set(VIEW_CENTER.x, 0.06, VIEW_CENTER.z);
 
-  flyTo(
-    VIEW_CENTER.clone(),
-    DEFAULT_VIEW.radius, DEFAULT_VIEW.phi, DEFAULT_VIEW.theta,
-    FLY_DURATION, 1
-  );
+  // 按当前画布比例选全景距离：手机竖屏要站远一点，否则 C 区会被切出画面
+  flyToOverview();
 
   hideBreadcrumb();
   hideNoHit();

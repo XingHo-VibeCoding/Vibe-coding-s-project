@@ -45,5 +45,39 @@ export const FLY_DURATION = 850;
 export const RADIUS_MIN = 6;
 export const RADIUS_MAX = 120;
 
+/** 全屏地图的缩放区间（比 3D 模式更需要"看得全"） */
+export const MAP_ZOOM_MIN = 0.4;
+export const MAP_ZOOM_MAX = 6;
+
+/** 进入全屏地图时的默认缩放（越小看得越全） */
+export const MAP_ENTER_ZOOM = 0.62;
+
+/**
+ * 旋转灵敏度（每像素位移对应的弧度）。
+ * 为什么分设备：手机屏幕窄，一次滑动撑死 200px 左右，
+ * 用鼠标的系数会显得"划好多下才转一点"；触摸屏给更大的系数才跟手。
+ */
+export const ROTATE_SENSITIVITY = {
+  mouse: 0.005,
+  touch: 0.011,
+};
+
+/**
+ * 全景视角的自适应半径。
+ *
+ * 为什么需要：手机竖屏的水平可视角度远小于宽屏。以 50° 垂直 FOV 算，
+ * 竖屏（aspect≈0.5）时水平 FOV 只有约 23°，固定 52 的距离装不下
+ * A~C 三个区域（X 方向跨度 44 单位），C 区会被切出画面。
+ *
+ * 为什么用分档而不是连续插值：连续插值会对 1.27 这种"其实够宽"的比例
+ * 也做放大，桌面端会被无谓地推远。分档保证只有真正窄的画面才拉远。
+ */
+export function defaultRadiusFor(aspect) {
+  const a = aspect && aspect > 0 ? aspect : 1.6;
+  if (a < 0.75) return 66;   // 手机竖屏：必须拉到能装下 A~C
+  if (a < 0.95) return 60;   // 窄竖屏 / 平板竖屏
+  return DEFAULT_VIEW.radius; // 其余（含接近方形的桌面窗口）：保持基准 52
+}
+
 /** 手机长按判定为"平移模式"的时长（毫秒） */
 export const LONG_PRESS_MS = 350;

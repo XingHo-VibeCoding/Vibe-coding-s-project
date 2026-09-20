@@ -10,9 +10,12 @@
 // ============================================================================
 
 import * as THREE from 'three';
-import { FLY_DURATION } from './config.js';
+import {
+  FLY_DURATION, RADIUS_MIN, RADIUS_MAX, DEFAULT_VIEW, defaultRadiusFor,
+  MAP_ZOOM_MIN, MAP_ZOOM_MAX,
+} from './config.js';
 import { state, view, view2d } from './state.js';
-import { camera, topCam, renderPass, outline } from './scene.js';
+import { camera, topCam, renderPass, outline, placeTopCam } from './scene.js';
 
 /** 当前正在进行的相机动画（null = 静止） */
 let anim = null;
@@ -35,9 +38,9 @@ export function updateCamera() {
     camera.position.set(view.target.x + ox, view.target.y + oy, view.target.z + oz);
     camera.lookAt(view.target);
   } else {
+    // 地图模式：俯视相机始终对准场景中心，只靠 target 平移 + zoom 缩放
+    placeTopCam();
     topCam.position.set(view2d.target.x, 90, view2d.target.z);
-    topCam.up.set(0, 0, -1);
-    topCam.lookAt(view2d.target.x, 0, view2d.target.z);
     topCam.zoom = view2d.zoom;
     topCam.updateProjectionMatrix();
   }
@@ -104,24 +107,66 @@ export function stepAnimation(dt) {
 /** 缩放：鼠标滚轮 / 双指捏合都走这里，统一夹在安全区间内 */
 export function zoomBy(factor) {
   if (state.topView) {
-    view2d.zoom = clamp(view2d.zoom * factor, 0.6, 6);
+    view2d.zoom = clamp(view2d.zoom * factor, MAP_ZOOM_MIN, MAP_ZOOM_MAX);
   } else {
-    view.radius = clamp(view.radius * factor, 6, 120);
+    view.radius = clamp(view.radius * factor, RADIUS_MIN, RADIUS_MAX);
   }
 }
 
-/** 旋转：拖动时改变偏航 / 俯仰（只在 3D 透视下有效） */
+/**
+ * 飞回全景（按当前画布比例自动选距离）。
+ * 为什么要按比例：手机竖屏水平可视角度只有约 23°，固定 52 装不下 A~C 三个区域，
+ * 会让 C 区标签被右边缘切掉。这里按画布宽高比算出合适的距离。
+ * @param {number} [dur] 动画时长
+ */
+export function flyToOverview(dur = FLY_DURATION) {
+  const aspect = camera.aspect || 1.6;
+  const radius = defaultRadiusFor(aspect);
+  flyTo(DEFAULT_VIEW.target.clone(), radius, DEFAULT_VIEW.phi, DEFAULT_VIEW.theta, dur);
+  return radius;
+}
+
+/**
+ * 旋转：拖动时改变偏航 / 俯仰（只在 3D 透视下有效）。
+ *
+ * 这里必须 stopFly()，这是个**真实缺陷修复**：
+ * 相机飞行动画（flyTo）每帧都会把 view.theta 重写成"起点→终点"的插值结果。
+ * 如果动画还没播完用户就开始拖，手指刚算出的 theta 会在下一帧被动画覆盖掉，
+ * 表现就是"手指明明在动，画面却几乎不转 / 要划好几下才动一下"。
+ * 用户主动拖动 = 接管镜头的意图，立刻中断动画，把控制权交回手指。
+ *
+ * theta 归一化到 (-π, π]：不加这步时，同一个朝向会有无数个等价值
+ * （0.62、0.62±2π、0.62±4π……），一路转下去数字会无限增大。
+ * 归一化后"当前朝向"永远是一个确定的值，数值也不会漂到浮点精度变差的区间。
+ * 视觉上完全等价（相机只吃角度的三角函数值），对渲染没有任何影响。
+ */
 export function rotateBy(dTheta, dPhi) {
-  view.theta += dTheta;
+  stopFly();
+  view.theta = wrapAngle(view.theta + dTheta);
   view.phi = clamp(view.phi + dPhi, 0.05, Math.PI / 2 - 0.02);
+}
+
+/** 把角度折算到 (-π, π]，保证同一个朝向只有一个表示 */
+function wrapAngle(a) {
+  const TWO_PI = Math.PI * 2;
+  let x = a % TWO_PI;
+  if (x <= -Math.PI) x += TWO_PI;
+  if (x > Math.PI) x -= TWO_PI;
+  return x;
 }
 
 /**
  * 平移：把屏幕像素位移换算成世界坐标位移。
+ *
+ * 和 rotateBy 同理，先 stopFly()：动画正在推进时 target 每帧都被重写，
+ * 用户这时拖动（比如刚点完搜索结果、镜头还在飞，就想把画面挪一下）
+ * 会看到"拖了没反应"。主动拖动即视为接管镜头。
+ *
  * @param {number} dx 水平像素位移
  * @param {number} dy 垂直像素位移
  */
 export function panBy(dx, dy) {
+  stopFly();
   const tgt = state.topView ? view2d.target : view.target;
   const dist = state.topView ? 18 / view2d.zoom : view.radius;
   const cam = state.topView ? topCam : camera;

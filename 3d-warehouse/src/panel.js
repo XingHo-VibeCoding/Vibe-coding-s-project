@@ -18,11 +18,18 @@ const el = {
   count: () => document.getElementById('result-count'),
   breadcrumb: () => document.getElementById('breadcrumb'),
   breadcrumbText: () => document.getElementById('breadcrumb-text'),
+  bcAction: () => document.querySelector('#breadcrumb .bc-action'),
   nohit: () => document.getElementById('nohit'),
   nohitTitle: () => document.getElementById('nohit-title'),
   nohitTip: () => document.getElementById('nohit-tip'),
   selinfo: () => document.getElementById('selinfo'),
   selinfoBody: () => document.getElementById('selinfo-body'),
+  selHead: () => document.getElementById('selinfo-head'),
+  selToggle: () => document.getElementById('selinfo-toggle'),
+  btnMap: () => document.getElementById('btn-map'),
+  btnMapLabel: () => document.querySelector('#btn-map span'),
+  btnMapIcon: () => document.querySelector('#btn-map .c-icon'),
+  mapBar: () => document.getElementById('map-bar'),
 };
 
 // ---------------------------------------------------------------------------
@@ -132,12 +139,16 @@ export function hideNoHit() {
 // ---------------------------------------------------------------------------
 // 选中详情卡
 // ---------------------------------------------------------------------------
-/** 显示某条物资的详情 */
+/**
+ * 显示某条物资的详情。
+ * 注意：默认是**收起**状态 —— 手机上完整详情卡会吃掉 300px 左右，
+ * 把 3D 舞台挤得只剩一半。收起后只占一行标题，想看细节再点开。
+ */
 export function showSelInfo(item) {
   const box = el.selinfo();
   const body = el.selinfoBody();
   if (!box || !body) return;
-  box.classList.remove('hidden');
+
   body.innerHTML =
     `<div class="row"><span>物资编号</span><span>${item.materialId}</span></div>` +
     `<div class="row"><span>物资名称</span><span>${item.materialName}</span></div>` +
@@ -147,9 +158,59 @@ export function showSelInfo(item) {
     `<div class="row"><span>箱子编号</span><span>${item.boxId}</span></div>` +
     `<div class="row"><span>数据状态</span><span>${item.dataStatus}</span></div>` +
     `<div class="path">路径：${breadcrumbFor(item)}</div>`;
+
+  setSelInfoExpanded(false);
+  box.classList.remove('hidden');
 }
 
-/** 隐藏详情卡 */
+/** 展开 / 收起详情卡主体 */
+export function setSelInfoExpanded(expanded) {
+  const box = el.selinfo();
+  const body = el.selinfoBody();
+  const toggle = el.selToggle();
+  if (body) body.classList.toggle('collapsed', !expanded);
+  if (box) box.classList.toggle('collapsed', !expanded);
+  if (toggle) toggle.textContent = expanded ? '收起' : '展开';
+}
+
+/** 当前详情卡是否展开 */
+export function isSelInfoExpanded() {
+  return !el.selinfo()?.classList.contains('collapsed');
+}
+
+/** 切换详情卡展开状态 */
+export function toggleSelInfo() {
+  setSelInfoExpanded(!isSelInfoExpanded());
+  return isSelInfoExpanded();
+}
+
+/** 隐藏详情卡，并复位成收起状态 */
 export function hideSelInfo() {
   el.selinfo()?.classList.add('hidden');
+  setSelInfoExpanded(false);
+}
+
+// ---------------------------------------------------------------------------
+// 地图模式界面
+// ---------------------------------------------------------------------------
+/**
+ * 同步地图模式的界面文字。
+ * @param {boolean} on 是否处于全屏地图
+ */
+export function setMapUi(on) {
+  const label = el.btnMapLabel();
+  const icon = el.btnMapIcon();
+  if (label) label.textContent = on ? '3D 视角' : '地图';
+  if (icon) icon.setAttribute('data-lucide', on ? 'box' : 'map');
+
+  const btn = el.btnMap();
+  if (btn) btn.title = on ? '返回 3D 视角 (M)' : '切换全屏地图 (M)';
+
+  const bc = el.bcAction();
+  if (bc) bc.textContent = on ? '返回 3D 视角' : '全屏地图';
+
+  el.mapBar()?.classList.toggle('hidden', !on);
+
+  // 图标是 data-lucide 换名，需要重新渲染
+  if (window.lucide) window.lucide.createIcons();
 }
