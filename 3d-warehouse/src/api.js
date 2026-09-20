@@ -11,7 +11,7 @@ import { search } from './search.js';
 import { resetView, locate } from './emphasis.js';
 import { isMinimapActive } from './minimap.js';
 import { isMapMode, enterMap, exitMap, toggleMap, screenToGround } from './mapview.js';
-import { isSelInfoExpanded, toggleSelInfo, setMapUi } from './panel.js';
+import { isSelInfoExpanded, toggleSelInfo, setMapUi, setLoading, setLoadError, clearLoadError } from './panel.js';
 import { defaultRadiusFor, PHI_MIN, PHI_MAX } from './config.js';
 import { haltInertia } from './controls.js';
 
@@ -53,6 +53,16 @@ export function exposeApi() {
     selExpanded: () => isSelInfoExpanded(),
     // 俯仰角边界（供测试断言"能转到接近垂直"）
     phiRange: () => ({ min: PHI_MIN, max: PHI_MAX }),
+    /** 结果面板当前处于哪一态：'loading' | 'error' | 'empty' | 'list' */
+    panelState: () => {
+      if (state.loading) return 'loading';
+      if (state.loadError) return 'error';
+      return document.querySelectorAll('#results .result-item.is-card').length
+        ? 'list' : 'empty';
+    },
+    /** 面板里实际渲染出来的物资卡片数（骨架块不算） */
+    cardCount: () => document.querySelectorAll('#results .result-item.is-card').length,
+    loading: () => state.loading === true,
   };
 
   window.__api = {
@@ -79,6 +89,10 @@ export function exposeApi() {
     toggleView: () => document.getElementById('btn-view')?.click(),
     toggleMinimap: () => document.getElementById('btn-minimap')?.click(),
     minimapActive: isMinimapActive,
+    /** 手动切加载态（供自动化测试直接验证三态，不用真去卡网络） */
+    setLoading,
+    setLoadError,
+    clearLoadError,
     getState: () => {
       const hi = window.__diag.highlight();
       return {

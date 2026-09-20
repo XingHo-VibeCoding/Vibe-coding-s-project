@@ -96,6 +96,16 @@ export function search(termRaw) {
   if (!q) { resetView(); return []; }
   const ql = q.toLowerCase();
 
+  // 数据没加载成功时，搜索一定是"搜不到东西"——因为 `state.items` 是空的。
+  // 如果不在这里拦一下，用户会看到「未找到"杯子"对应的物资」，
+  // 于是去怀疑自己输错了关键词，反复改词重搜，而真正的问题是数据没读出来。
+  // 这里直接说清原因，并把面板保持在错误态（错误信息比"没搜到"更接近真相）。
+  if (state.loadError) {
+    setNoHit('暂时搜不了', '物资数据没能加载成功，搜索不可用。请刷新页面重试。');
+    renderResults([], locate);
+    return [];
+  }
+
   hideNoHit();
 
   // 1. 物资编号精确匹配

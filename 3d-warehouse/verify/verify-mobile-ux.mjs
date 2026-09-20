@@ -613,6 +613,150 @@ check('再点一次退出地图', (await desk.evaluate(() => window.__diag.mapMo
 
 check('桌面端全程无报错', dErr.length === 0, dErr.slice(0, 3).join(' | '));
 
+// =====================================================================
+// H. 结果面板四态（加载中 / 出错 / 空 / 有结果）
+// ---------------------------------------------------------------------
+// 为什么要专门测这四态：加载态是"最容易不做"的一个 —— demo 模式读本地 JSON
+// 快得看不见它，于是很自然就不写了。但换成后端、或在慢手机上首次打开时，
+// 它会真的露出来，那时如果显示的是**空态**的文案（"输入…开始定位"），
+// 用户会以为页面已就绪、只是自己没输入，而实际数据还在路上。
+//
+// 这里不真去卡网络（那会让测试变慢且不稳），而是直接调 __api 切状态 ——
+// 验证的是"四态各自渲染成什么"，这是渲染层该负责的部分。
+// =====================================================================
+
+// ---- H0. 先复位，再验证"数据就绪、还没搜索"的空态 ----
+// 必须先 reset()：前面桌面端的用例点过「地图」、搜索过，面板里还留着结果。
+// 不复位就断言"空态"，测的是上一个用例的残留状态，不是初始状态。
+await desk.evaluate(() => window.__api.reset());
+await desk.waitForTimeout(800);
+const s0 = await desk.evaluate(() => ({
+  state: window.__diag.panelState(),
+  cards: window.__diag.cardCount(),
+  loading: window.__diag.loading(),
+}));
+check('复位后面板回到空态（数据已就绪、不在加载中）',
+  s0.state === 'empty' && s0.loading === false && s0.cards === 0,
+  `state=${s0.state} loading=${s0.loading} cards=${s0.cards}`);
+
+// ---- H1. 有结果：卡片数应等于命中数 ----
+await desk.evaluate(() => window.__api.search('杯子'));
+await desk.waitForTimeout(700);
+const s1 = await desk.evaluate(() => ({
+  state: window.__diag.panelState(),
+  cards: window.__diag.cardCount(),
+  firstCardIsButton: document.querySelector('#results .result-item.is-card')?.getAttribute('role') === 'button',
+  firstCardTabIndex: document.querySelector('#results .result-item.is-card')?.tabIndex,
+}));
+check('搜到结果时渲染出物资卡片（数量 > 0）',
+  s1.state === 'list' && s1.cards > 0,
+  `state=${s1.state} 卡片数=${s1.cards}`);
+check('卡片可被键盘操作（role=button + tabIndex=0）',
+  s1.firstCardIsButton && s1.firstCardTabIndex === 0,
+  `role=${s1.firstCardIsButton} tabIndex=${s1.firstCardTabIndex}`);
+
+// ---- H2. 加载中：骨架 + 转圈，且不能是空态文案 ----
+await desk.evaluate(() => window.__api.setLoading(true));
+await desk.waitForTimeout(150);
+const s2 = await desk.evaluate(() => ({
+  state: window.__diag.panelState(),
+  cards: window.__diag.cardCount(),
+  skel: document.querySelectorAll('#results .result-item.skeleton').length,
+  hintCls: document.querySelector('#results .hint')?.className || '',
+  spin: !!document.querySelector('#results .hint-spinner'),
+  role: document.querySelector('#results .hint')?.getAttribute('role'),
+}));
+check('加载态：显示加载提示而不是空态文案',
+  s2.state === 'loading' && s2.hintCls.includes('hint-loading'),
+  `state=${s2.state} hint="${s2.hintCls}"`);
+check('加载态：渲染骨架占位块',
+  s2.skel >= 1,
+  `骨架块 ${s2.skel} 个`);
+check('加载态：有转圈动画，且读屏角色为 status（不打断）',
+  s2.spin && s2.role === 'status',
+  `转圈=${s2.spin} role=${s2.role}`);
+check('加载态下不显示任何物资卡片（避免显示过期数据）',
+  s2.cards === 0,
+  `卡片数=${s2.cards}`);
+
+// ---- H3. 出错：暖红配色 + role=alert，且要和空态明确区分 ----
+await desk.evaluate(() => { window.__api.setLoading(false); window.__api.setLoadError('网络异常，没能取到物资数据'); });
+await desk.waitForTimeout(150);
+const s3 = await desk.evaluate(() => {
+  const h = document.querySelector('#results .hint');
+  const bg = h ? getComputedStyle(h).backgroundColor : '';
+  return {
+    state: window.__diag.panelState(),
+    hintCls: h?.className || '',
+    role: h?.getAttribute('role'),
+    bg,
+    text: h?.textContent || '',
+  };
+});
+check('出错态：role=alert（读屏会打断播报，因为这是异常）',
+  s3.state === 'error' && s3.role === 'alert',
+  `state=${s3.state} role=${s3.role}`);
+check('出错态：配色与空态拉开差距（不是中性灰）',
+  s3.hintCls.includes('hint-error') && s3.bg !== 'rgba(0, 0, 0, 0)',
+  `class="${s3.hintCls}" bg=${s3.bg}`);
+check('出错态：文案里带上具体原因，而不是只说"出错了"',
+  s3.text.includes('网络异常'),
+  `文案="${s3.text.slice(0, 50)}"`);
+
+// ---- H4. 出错时搜索应说明"搜不了"，而不是伪装成"没搜到" ----
+// 这是个真实缺陷回归锁：出错时 state.items 是空的，搜索必然返回 0 条，
+// 若不拦一下就会显示「未找到"杯子"对应的物资」—— 用户会去改关键词反复重搜，
+// 而真正的问题是数据根本没读出来。
+await desk.evaluate(() => window.__api.search('杯子'));
+await desk.waitForTimeout(500);
+const s4 = await desk.evaluate(() => ({
+  nohitTitle: document.getElementById('nohit-title')?.textContent || '',
+  // 面板应保持错误态（错误信息比"没搜到"更接近真相）
+  state: window.__diag.panelState(),
+}));
+check('数据出错时搜索提示"搜不了"而不是"没搜到"',
+  s4.nohitTitle.includes('搜不了'),
+  `提示标题="${s4.nohitTitle}"`);
+
+// ---- H5. 清错误后能正常恢复（回归锁住 setLoadError(null) 的坑）----
+// setLoadError(null) 走不通 —— 它内部 `msg || '数据读取失败。'` 会把 null 填成默认文案，
+// 于是"清错误"变成"换成另一条错误"，页面卡在错误态出不来。所以专门有 clearLoadError()。
+await desk.evaluate(() => { window.__api.clearLoadError(); window.__api.reset(); });
+await desk.waitForTimeout(700);
+await desk.evaluate(() => window.__api.search('杯子'));
+await desk.waitForTimeout(700);
+const s5 = await desk.evaluate(() => ({
+  state: window.__diag.panelState(),
+  cards: window.__diag.cardCount(),
+}));
+check('清掉错误后能恢复正常搜索（不会卡死在错误态）',
+  s5.state === 'list' && s5.cards > 0,
+  `state=${s5.state} 卡片数=${s5.cards}`);
+
+// ---- H6. 组件抽取没有弄丢无障碍属性 ----
+// 这条必须在**加载态下**查：加载结束后转圈元素已被移除，查不到是正常的，
+// 拿"查不到"去断言等于什么都没测（上一版就写错了，写成恒真/恒假的死断言）。
+await desk.evaluate(() => window.__api.setLoading(true));
+await desk.waitForTimeout(150);
+const a11y = await desk.evaluate(() => ({
+  spinnerHidden: document.querySelector('#results .hint-spinner')?.getAttribute('aria-hidden'),
+  skeletonHidden: document.querySelector('#results .result-item.skeleton')?.getAttribute('aria-hidden'),
+  spinnerBg: (() => {
+    const s = document.querySelector('#results .hint-spinner');
+    return s ? getComputedStyle(s).animationName : '';
+  })(),
+}));
+check('转圈与骨架都是纯装饰、对读屏隐藏（aria-hidden=true）',
+  a11y.spinnerHidden === 'true' && a11y.skeletonHidden === 'true',
+  `转圈 aria-hidden=${a11y.spinnerHidden}，骨架 aria-hidden=${a11y.skeletonHidden}`);
+check('转圈真的在动（animationName 不是 none）',
+  a11y.spinnerBg && a11y.spinnerBg !== 'none',
+  `animation=${a11y.spinnerBg}`);
+
+// 收尾：复位，别把测试状态留给后面
+await desk.evaluate(() => { window.__api.setLoading(false); window.__api.clearLoadError(); window.__api.reset(); });
+await desk.waitForTimeout(600);
+
 await desk.screenshot({ path: 'shot-desktop-fixed.png' });
 
 await browser.close();

@@ -25,7 +25,7 @@ import { buildWarehouse, renderer, resize, composer, canvasHost } from './scene.
 import { updateCamera, stepAnimation, flyToOverview } from './camera.js';
 import { locate, resetView, setResetHook } from './emphasis.js';
 import { search } from './search.js';
-import { renderResults } from './panel.js';
+import { renderResults, setLoading, setLoadError, setResultCount } from './panel.js';
 import { initControls } from './controls.js';
 import { initMinimap, sizeMinimap, renderMinimap } from './minimap.js';
 import { toggleMap, enterMap, exitMap, isMapMode, pickOnMap, setMapUiHook, setPickBoxHook } from './mapview.js';
@@ -198,10 +198,28 @@ async function loadDemo() {
 // 启动
 // ---------------------------------------------------------------------------
 async function init() {
-  const items = await loadData();
+  // 先把界面切到「加载中」，再去取数据。
+  // 顺序很重要：反过来的话，取数那几百毫秒里面板显示的是"输入…开始定位"，
+  // 那是**空态**的文案，会让人以为页面已就绪、只是自己没输入 —— 实际数据还在路上。
+  setLoading(true);
+
+  let items;
+  try {
+    items = await loadData();
+  } catch (err) {
+    // 取数彻底失败（本地 JSON 都不见了 / 格式坏了）。
+    // 不抛出：抛出会中断 init，3D 场景根本建不起来，页面只剩一张白板。
+    // 这里让场景照常建起来（空数据就是空货架），只在面板上说明出了什么事。
+    setLoadError(`没能读取物资数据：${err.message}。请确认 data/demo-data.json 存在，或查看控制台。`);
+    items = [];
+  }
+
   state.items = items;
   state.byId.clear();
   for (const it of items) state.byId.set(it.materialId, it);
+
+  // 数据就位，解除加载态
+  setLoading(false);
 
   buildWarehouse();
   initMinimap();
@@ -230,7 +248,9 @@ async function init() {
   setResetHook(() => hooks.stopInertia?.());
   bindUi();
   setMapUi(false);
-  renderResults([], locate);   // 先渲染一次空列表（带提示语）
+  // 此时 state.loading 已是 false，这一次会画出"输入…开始定位"或错误提示
+  renderResults([], locate);
+  setResultCount(0);
 
   // 布局与循环
   resize();
