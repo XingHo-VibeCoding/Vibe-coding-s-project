@@ -51,3 +51,13 @@ Thumbs.db
 
 # ============ AI 内部记忆目录（非项目交付内容，不进仓库）============
 .workbuddy/
+
+# ============ 本地临时备份（重构期间用，非交付内容，不进仓库）============
+*.backup/
+*.bak/
+
+# ============ Python / 本地运行态 ============
+__pycache__/
+*.pyc
+prototype_created.json
+seed.local.json

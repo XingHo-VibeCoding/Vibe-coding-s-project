@@ -1,0 +1,10 @@
+{
+  "name": "warehouse3d-v2",
+  "version": "2.0.0",
+  "private": true,
+  "description": "福州校区仓库 3D 搜索定位 V2（本地演示原型，未连接腾讯文档）。开源复用优先：three.js 坐标层 + OutlinePass 后处理 + 小地图 + Lucide 图标。",
+  "type": "module",
+  "scripts": {
+    "serve": "python3 -m http.server 8002 --bind 127.0.0.1"
+  }
+}

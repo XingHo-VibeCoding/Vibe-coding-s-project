@@ -1,0 +1,396 @@
+{
+  "_note": "3D 搜索后端的演示快照。用于 seed 模式（无需腾讯文档凭据）。",
+  "_source": "由 data/demo-data.json 生成，仅作开发与演示，非真实库存。",
+  "items": [
+    {
+      "materialId": "FZ-SP-00001",
+      "materialName": "不锈钢餐盘",
+      "campus": "福州校区",
+      "zone": "A",
+      "row": 1,
+      "level": 2,
+      "boxId": "A-01-02",
+      "position": {
+        "x": -22,
+        "y": 3.4,
+        "z": 0
+      },
+      "dataStatus": "演示数据"
+    },
+    {
+      "materialId": "FZ-SP-00002",
+      "materialName": "餐刀",
+      "campus": "福州校区",
+      "zone": "A",
+      "row": 1,
+      "level": 1,
+      "boxId": "A-01-01",
+      "position": {
+        "x": -22,
+        "y": 1,
+        "z": 0
+      },
+      "dataStatus": "演示数据"
+    },
+    {
+      "materialId": "FZ-SP-00003",
+      "materialName": "砧板",
+      "campus": "福州校区",
+      "zone": "A",
+      "row": 1,
+      "level": 3,
+      "boxId": "A-01-03",
+      "position": {
+        "x": -22,
+        "y": 5.8,
+        "z": 0
+      },
+      "dataStatus": "演示数据"
+    },
+    {
+      "materialId": "FZ-SP-00004",
+      "materialName": "筷子",
+      "campus": "福州校区",
+      "zone": "A",
+      "row": 2,
+      "level": 1,
+      "boxId": "A-02-01",
+      "position": {
+        "x": -22,
+        "y": 1,
+        "z": 5
+      },
+      "dataStatus": "演示数据"
+    },
+    {
+      "materialId": "FZ-SP-00005",
+      "materialName": "一次性吸管",
+      "campus": "福州校区",
+      "zone": "A",
+      "row": 2,
+      "level": 2,
+      "boxId": "A-02-02",
+      "position": {
+        "x": -22,
+        "y": 3.4,
+        "z": 5
+      },
+      "dataStatus": "演示数据"
+    },
+    {
+      "materialId": "FZ-SP-00006",
+      "materialName": "勺子",
+      "campus": "福州校区",
+      "zone": "A",
+      "row": 2,
+      "level": 3,
+      "boxId": "A-02-03",
+      "position": {
+        "x": -22,
+        "y": 5.8,
+        "z": 5
+      },
+      "dataStatus": "演示数据"
+    },
+    {
+      "materialId": "FZ-SP-00007",
+      "materialName": "碗",
+      "campus": "福州校区",
+      "zone": "A",
+      "row": 3,
+      "level": 1,
+      "boxId": "A-03-01",
+      "position": {
+        "x": -22,
+        "y": 1,
+        "z": 10
+      },
+      "dataStatus": "演示数据"
+    },
+    {
+      "materialId": "FZ-SP-00008",
+      "materialName": "杯子",
+      "campus": "福州校区",
+      "zone": "A",
+      "row": 3,
+      "level": 2,
+      "boxId": "A-03-02",
+      "position": {
+        "x": -22,
+        "y": 3.4,
+        "z": 10
+      },
+      "dataStatus": "演示数据"
+    },
+    {
+      "materialId": "FZ-SP-00009",
+      "materialName": "餐巾纸",
+      "campus": "福州校区",
+      "zone": "A",
+      "row": 3,
+      "level": 3,
+      "boxId": "A-03-03",
+      "position": {
+        "x": -22,
+        "y": 5.8,
+        "z": 10
+      },
+      "dataStatus": "演示数据"
+    },
+    {
+      "materialId": "FZ-GD-00010",
+      "materialName": "投影仪",
+      "campus": "福州校区",
+      "zone": "B",
+      "row": 1,
+      "level": 1,
+      "boxId": "B-01-01",
+      "position": {
+        "x": 0,
+        "y": 1,
+        "z": 0
+      },
+      "dataStatus": "演示数据"
+    },
+    {
+      "materialId": "FZ-GD-00011",
+      "materialName": "笔记本电脑",
+      "campus": "福州校区",
+      "zone": "B",
+      "row": 1,
+      "level": 2,
+      "boxId": "B-01-02",
+      "position": {
+        "x": 0,
+        "y": 3.4,
+        "z": 0
+      },
+      "dataStatus": "演示数据"
+    },
+    {
+      "materialId": "FZ-GD-00012",
+      "materialName": "白板笔",
+      "campus": "福州校区",
+      "zone": "B",
+      "row": 1,
+      "level": 3,
+      "boxId": "B-01-03",
+      "position": {
+        "x": 0,
+        "y": 5.8,
+        "z": 0
+      },
+      "dataStatus": "演示数据"
+    },
+    {
+      "materialId": "FZ-SB-00013",
+      "materialName": "椅子",
+      "campus": "福州校区",
+      "zone": "B",
+      "row": 2,
+      "level": 1,
+      "boxId": "B-02-01",
+      "position": {
+        "x": 0,
+        "y": 1,
+        "z": 5
+      },
+      "dataStatus": "演示数据"
+    },
+    {
+      "materialId": "FZ-SB-00014",
+      "materialName": "桌子",
+      "campus": "福州校区",
+      "zone": "B",
+      "row": 2,
+      "level": 2,
+      "boxId": "B-02-02",
+      "position": {
+        "x": 0,
+        "y": 3.4,
+        "z": 5
+      },
+      "dataStatus": "演示数据"
+    },
+    {
+      "materialId": "FZ-SB-00015",
+      "materialName": "货架",
+      "campus": "福州校区",
+      "zone": "B",
+      "row": 2,
+      "level": 3,
+      "boxId": "B-02-03",
+      "position": {
+        "x": 0,
+        "y": 5.8,
+        "z": 5
+      },
+      "dataStatus": "演示数据"
+    },
+    {
+      "materialId": "FZ-HC-00016",
+      "materialName": "消毒液",
+      "campus": "福州校区",
+      "zone": "B",
+      "row": 3,
+      "level": 1,
+      "boxId": "B-03-01",
+      "position": {
+        "x": 0,
+        "y": 1,
+        "z": 10
+      },
+      "dataStatus": "演示数据"
+    },
+    {
+      "materialId": "FZ-HC-00017",
+      "materialName": "手套",
+      "campus": "福州校区",
+      "zone": "B",
+      "row": 3,
+      "level": 2,
+      "boxId": "B-03-02",
+      "position": {
+        "x": 0,
+        "y": 3.4,
+        "z": 10
+      },
+      "dataStatus": "演示数据"
+    },
+    {
+      "materialId": "FZ-HC-00018",
+      "materialName": "口罩",
+      "campus": "福州校区",
+      "zone": "B",
+      "row": 3,
+      "level": 3,
+      "boxId": "B-03-03",
+      "position": {
+        "x": 0,
+        "y": 5.8,
+        "z": 10
+      },
+      "dataStatus": "演示数据"
+    },
+    {
+      "materialId": "FZ-HC-00019",
+      "materialName": "防护面罩",
+      "campus": "福州校区",
+      "zone": "C",
+      "row": 1,
+      "level": 1,
+      "boxId": "C-01-01",
+      "position": {
+        "x": 22,
+        "y": 1,
+        "z": 0
+      },
+      "dataStatus": "演示数据"
+    },
+    {
+      "materialId": "FZ-LP-00020",
+      "materialName": "教材",
+      "campus": "福州校区",
+      "zone": "C",
+      "row": 1,
+      "level": 2,
+      "boxId": "C-01-02",
+      "position": {
+        "x": 22,
+        "y": 3.4,
+        "z": 0
+      },
+      "dataStatus": "演示数据"
+    },
+    {
+      "materialId": "FZ-LP-00021",
+      "materialName": "练习册",
+      "campus": "福州校区",
+      "zone": "C",
+      "row": 1,
+      "level": 3,
+      "boxId": "C-01-03",
+      "position": {
+        "x": 22,
+        "y": 5.8,
+        "z": 0
+      },
+      "dataStatus": "演示数据"
+    },
+    {
+      "materialId": "FZ-QT-00022",
+      "materialName": "清洁布",
+      "campus": "福州校区",
+      "zone": "C",
+      "row": 2,
+      "level": 1,
+      "boxId": "C-02-01",
+      "position": {
+        "x": 22,
+        "y": 1,
+        "z": 5
+      },
+      "dataStatus": "演示数据"
+    },
+    {
+      "materialId": "FZ-QT-00023",
+      "materialName": "垃圾袋",
+      "campus": "福州校区",
+      "zone": "C",
+      "row": 2,
+      "level": 2,
+      "boxId": "C-02-02",
+      "position": {
+        "x": 22,
+        "y": 3.4,
+        "z": 5
+      },
+      "dataStatus": "演示数据"
+    },
+    {
+      "materialId": "FZ-SP-00024",
+      "materialName": "一次性筷子",
+      "campus": "福州校区",
+      "zone": "C",
+      "row": 2,
+      "level": 3,
+      "boxId": "C-02-03",
+      "position": {
+        "x": 22,
+        "y": 5.8,
+        "z": 5
+      },
+      "dataStatus": "演示数据"
+    },
+    {
+      "materialId": "FZ-QT-00025",
+      "materialName": "杯子",
+      "campus": "福州校区",
+      "zone": "C",
+      "row": 3,
+      "level": 1,
+      "boxId": "C-03-01",
+      "position": {
+        "x": 22,
+        "y": 1,
+        "z": 10
+      },
+      "dataStatus": "演示数据"
+    },
+    {
+      "materialId": "FZ-QT-00026",
+      "materialName": "电池",
+      "campus": "福州校区",
+      "zone": "C",
+      "row": 3,
+      "level": 2,
+      "boxId": "C-03-02",
+      "position": {
+        "x": 22,
+        "y": 3.4,
+        "z": 10
+      },
+      "dataStatus": "演示数据"
+    }
+  ]
+}

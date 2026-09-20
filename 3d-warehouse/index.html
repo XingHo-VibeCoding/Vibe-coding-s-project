@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, viewport-fit=cover" />
+  <title>福州校区仓库 · 3D 定位工作台</title>
+  <link rel="stylesheet" href="./styles.css" />
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "./vendor/three.module.js",
+        "three/addons/": "./vendor/addons/"
+      }
+    }
+  </script>
+</head>
+<body>
+  <div id="app">
+    <!-- 顶栏：品牌 + 突出搜索框 + 演示数据徽标 -->
+    <header class="topbar">
+      <div class="brand">
+        <i data-lucide="warehouse" class="brand-icon"></i>
+        <div class="brand-text">
+          <span class="brand-title">福州校区仓库</span>
+          <span class="brand-sub">3D 定位工作台</span>
+        </div>
+      </div>
+
+      <form id="search-form" class="search-wrap" autocomplete="off">
+        <i data-lucide="search" class="search-icon"></i>
+        <input id="search" type="search" enterkeyhint="search" inputmode="search"
+               placeholder="搜索物资编号 / 名称 / 区域(A B C) / 货架排号 / 箱位(A-01-02)…"
+               autocomplete="off" spellcheck="false" />
+        <button id="btn-search" class="btn btn-primary" type="submit" title="搜索 (Enter)">定位</button>
+        <button id="btn-clear" class="btn btn-ghost" type="button" title="清空 (Esc)">清空</button>
+      </form>
+
+      <div class="demo-flag" title="当前为本地演示数据，非真实库存">
+        <i data-lucide="flask-conical" class="flag-icon"></i>
+        <span>演示数据</span>
+      </div>
+    </header>
+
+    <!-- 主舞台 -->
+    <main class="stage">
+      <div id="canvas-host"></div>
+
+      <div id="breadcrumb" class="breadcrumb hidden" aria-live="polite">
+        <i data-lucide="map-pin" class="bc-icon"></i>
+        <span id="breadcrumb-text"></span>
+      </div>
+
+      <div id="nohit" class="nohit hidden" role="alert">
+        <i data-lucide="search-x" class="nohit-icon"></i>
+        <div class="nohit-body">
+          <div id="nohit-title" class="nohit-title">未找到匹配项</div>
+          <div id="nohit-tip" class="nohit-tip"></div>
+        </div>
+      </div>
+
+      <!-- 左下视图控制（精简版：仅保留"回到全景"） -->
+      <div class="controls" role="toolbar" aria-label="视图控制">
+        <button id="btn-reset" class="btn" type="button" title="回到全景 (R)">
+          <i data-lucide="maximize" class="c-icon"></i><span>全景</span>
+        </button>
+      </div>
+
+      <div class="hint-bar" id="hint-bar">拖拽旋转 · 滚轮缩放 · 右键平移 · 回车搜索 · R 全景</div>    </main>
+
+    <!-- 右侧结果面板 -->
+    <aside class="panel" id="panel" aria-label="定位结果">
+      <div class="panel-head">
+        <span class="ph-title"><i data-lucide="list-filter" class="ph-icon"></i>定位结果</span>
+        <span id="result-count" class="count">0</span>
+      </div>
+      <div id="results" class="results">
+        <div class="hint">输入物资编号 / 名称 / 区域 / 货架排号 / 箱位开始定位。</div>
+      </div>
+      <div id="selinfo" class="selinfo hidden">
+        <div class="sel-head">
+          <i data-lucide="package-search" class="sel-icon"></i>
+          <span>当前箱位</span>
+        </div>
+        <div id="selinfo-body"></div>
+        <button id="btn-overview" class="btn btn-primary btn-block" type="button">
+          <i data-lucide="maximize" class="c-icon"></i>一键回到全景
+        </button>
+      </div>
+    </aside>
+  </div>
+
+  <script src="./vendor/lucide.js"></script>
+  <script type="module" src="./src/main.js"></script>
+</body>
+</html>
