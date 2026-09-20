@@ -56,6 +56,9 @@ Thumbs.db
 *.backup/
 *.bak/
 
+# ============ 发布用的临时副本（由 3d-warehouse 派生，不进仓库）============
+_deploy_*/
+
 # ============ Python / 本地运行态 ============
 __pycache__/
 *.pyc
