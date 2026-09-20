@@ -3,16 +3,19 @@
 // ----------------------------------------------------------------------------
 // 职责：把"手指/鼠标的动作"翻译成相机操作，只做这一件事。
 //
-// 交互约定：
-//   鼠标左键拖拽  → 旋转       鼠标右键拖拽 / 滚轮 → 平移 / 缩放
-//   触摸单指拖拽  → 旋转       触摸单指长按后拖拽 → 平移
-//   触摸双指捏合  → 缩放       触摸双指移动     → 平移
+// 触摸手势约定：
+//   单指拖拽  → 旋转（横竖都能转；横向无限，纵向转到底会自然减速）
+//   双指拖拽  → 平移（手机上最自然的平移方式，和地图类应用一致）
+//   双指捏合  → 缩放
+//   快速轻扫  → 惯性继续转（flick），大角度不用反复划
 //
-// 为什么有"长按平移"：手机没有右键，单指原本只能旋转，
-// 长按 350ms 后切换到平移，补上这个缺口。
+// 为什么手机上没有"单指平移"：一个指头只能有一种默认语义，选了旋转
+// （找货最常做的是绕着货架看）。平移交给双指——比"长按 350ms 再拖"
+// 可靠得多，长按很容易被系统手势或手指微抖打断。
+// 鼠标右键在手机上无对应操作，桌面端保留右键平移。
 // ============================================================================
 
-import { LONG_PRESS_MS, ROTATE_SENSITIVITY } from './config.js';
+import { ROTATE_SENSITIVITY, FLICK_MS, FLICK_MIN_PX } from './config.js';
 import { state } from './state.js';
 import { renderer } from './scene.js';
 import { zoomBy, rotateBy, panBy } from './camera.js';
@@ -29,21 +32,60 @@ export function initControls(dom = renderer.domElement) {
   let lastX = 0;
   let lastY = 0;
   let pinchDist = 0;          // 双指间距（用于算缩放比例）
-  let pressTimer = null;      // 长按计时器
-  let longPressPan = false;   // 是否已进入"长按平移"状态
   let sens = ROTATE_SENSITIVITY.mouse; // 当前指针的旋转灵敏度（按下时确定）
+
+  // ---- 惯性轻扫（flick）用 ----
+  // 记录最近的位移轨迹，抬手时据此判断"这一下扫得多快"。
+  // 为什么要做：没有惯性时，想转 180° 得把手指在屏幕上倒腾两三回，
+  // 这正是真机反馈"大角度要划好多下"的来源之一。
+  let trail = [];             // [{ t, x }] 最近若干次单指水平位置
+  let inertia = null;         // { vx, vy, raf } 正在跑的惯性动画
 
   const twoDist = () => {
     const p = [...pointers.values()];
     return Math.hypot(p[0].x - p[1].x, p[0].y - p[1].y);
   };
 
-  const cancelPress = () => {
-    if (pressTimer) { clearTimeout(pressTimer); pressTimer = null; }
-    longPressPan = false;
-  };
+  /** 停掉正在跑的惯性（用户再次按下、或切到地图模式时必须停） */
+  function stopInertia() {
+    if (inertia) { cancelAnimationFrame(inertia.raf); inertia = null; }
+  }
+
+  stopInertiaFn = stopInertia;   // 让模块级的 haltInertia() 能用到
+
+  /**
+   * 抬手后按最后一次的滑动速度继续转一会儿，速度按 friction 逐帧衰减。
+   * 用 rAF + 时间差计算，保证不同刷新率（60/90/120Hz）下衰减速度一致。
+   */
+  function startInertia(vx, vy) {
+    if (!vx && !vy) return;
+    if (state.topView) return;          // 俯视地图下不转，没必要跑惯性
+    const friction = 0.94;              // 每帧保留的比例
+    let prev = performance.now();
+    inertia = {
+      raf: 0,
+      vx, vy,
+    };
+    const step = (now) => {
+      if (!inertia) return;
+      const dt = Math.min(48, now - prev) / 16.67;  // 折算成"多少帧"（封顶防跳变）
+      prev = now;
+      inertia.vx *= Math.pow(friction, dt);
+      inertia.vy *= Math.pow(friction, dt);
+      // 速度太慢就收工，避免无意义地一直占着 rAF
+      if (Math.abs(inertia.vx) < 0.0008 && Math.abs(inertia.vy) < 0.0008) {
+        inertia = null;
+        return;
+      }
+      rotateBy(-inertia.vx * dt * sens, -inertia.vy * dt * sens);
+      inertia.raf = requestAnimationFrame(step);
+    };
+    inertia.raf = requestAnimationFrame(step);
+  }
 
   function onDown(e) {
+    stopInertia();   // 手指一落下就接管，惯性立刻让位
+
     // 兜底自愈：正常情况下 pointerup/cancel 会把触点清掉，
     // 但如果那一次事件丢了（手指滑出屏幕、被系统手势打断、切后台），
     // pointers 里会残留"幽灵触点"，导致 pointers.size 一直是 2，
@@ -63,6 +105,7 @@ export function initControls(dom = renderer.domElement) {
     pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
 
     if (pointers.size === 1) {
+      // 俯视地图 / 鼠标右键 → 平移；其余（3D 下的单指、左键）→ 旋转
       mode = (e.button === 2 || state.topView) ? 'pan' : 'rotate';
       lastX = e.clientX;
       lastY = e.clientY;
@@ -70,15 +113,11 @@ export function initControls(dom = renderer.domElement) {
       // 触摸屏旋转更跟手（见 config.ROTATE_SENSITIVITY 的说明）
       sens = e.pointerType === 'touch' ? ROTATE_SENSITIVITY.touch : ROTATE_SENSITIVITY.mouse;
 
-      // 触摸屏单指：按住不动 350ms → 切到平移模式
-      if (e.pointerType === 'touch' && !state.topView) {
-        longPressPan = false;
-        pressTimer = setTimeout(() => { longPressPan = true; }, LONG_PRESS_MS);
-      }
+      trail = [{ t: performance.now(), x: e.clientX, y: e.clientY }];
     } else if (pointers.size === 2) {
-      cancelPress();
       mode = 'pan';
       pinchDist = twoDist();
+      trail = [];       // 双指不做惯性旋转
     }
   }
 
@@ -104,13 +143,12 @@ export function initControls(dom = renderer.domElement) {
     lastX = e.clientX;
     lastY = e.clientY;
 
-    // 已进入长按平移 → 直接平移
-    if (longPressPan) { panBy(dx, dy); return; }
-
     if (mode === 'rotate' && !state.topView) {
-      // 手指/鼠标已经明显移动 → 判定为旋转意图，取消长按计时
-      if (pressTimer && (Math.abs(dx) > 2 || Math.abs(dy) > 2)) cancelPress();
       rotateBy(-dx * sens, -dy * sens);
+      // 只留最近 FLICK_MS 内的轨迹，用来判断抬手速度
+      const now = performance.now();
+      trail.push({ t: now, x: e.clientX, y: e.clientY });
+      while (trail.length > 2 && now - trail[0].t > FLICK_MS) trail.shift();
     } else {
       panBy(dx, dy);
     }
@@ -119,9 +157,23 @@ export function initControls(dom = renderer.domElement) {
   function onUp(e) {
     pointers.delete(e.pointerId);
     if (pointers.size < 2) pinchDist = 0;
+
+    // 抬手瞬间：若刚才在旋转且扫得够快，就带一段惯性。
+    // 注意要在 mode 被清空之前判断。
     if (pointers.size === 0) {
+      if (mode === 'rotate' && !state.topView && trail.length >= 2) {
+        const first = trail[0];
+        const last = trail[trail.length - 1];
+        const dt = last.t - first.t;
+        const moved = Math.hypot(last.x - first.x, last.y - first.y);
+        // 位移够大、时间够短，才算"轻扫"而不是"慢慢挪"
+        if (dt > 0 && moved >= FLICK_MIN_PX && dt <= FLICK_MS) {
+          // px/ms → px/帧（16.67ms）
+          startInertia(((last.x - first.x) / dt) * 16.67, ((last.y - first.y) / dt) * 16.67);
+        }
+      }
       mode = null;
-      cancelPress();
+      trail = [];
     }
   }
 
@@ -137,5 +189,16 @@ export function initControls(dom = renderer.domElement) {
   dom.addEventListener('wheel', onWheel, { passive: false });
   dom.addEventListener('contextmenu', (e) => e.preventDefault());
 
-  return { pointers };
+  return { pointers, stopInertia };
 }
+
+/**
+ * 当前"停掉惯性"的实现（由 initControls 注册）。
+ *
+ * 为什么要有这个模块级出口：`initControls()` 的返回值只有 `main.js` 拿得到，
+ * 但 `api.js`（对外测试接口）需要在任意时刻把惯性掐掉。
+ * 惯性是个自己会一直跑的 rAF 循环 —— 测试若不显式停掉它，
+ * 读到的 theta 就是个还在变化的随机值，断言会时好时坏，极难排查。
+ */
+let stopInertiaFn = () => {};
+export function haltInertia() { stopInertiaFn(); }

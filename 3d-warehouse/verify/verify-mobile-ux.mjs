@@ -27,7 +27,7 @@ await mob.goto(BASE, { waitUntil: 'load' });
 await mob.waitForFunction(() => window.__diag && window.__diag.ready === true, { timeout: 15000 });
 
 // ---- 1. 旋转灵敏度：同样滑动距离，触摸应该转得更多 ----
-// 三个坑，都踩过了：
+// 四个坑，都踩过了：
 //   a) CDP 的 dispatchTouchEvent 会把连续 touchMove 合并（发 10 个只到 2 个），测不准；
 //   b) 视角监听器绑在 #canvas-host 里的 <canvas> 上（见 main.js 的 initControls），
 //      事件必须派发给 canvas 本身，派给外层 div 是到不了的；
@@ -35,6 +35,10 @@ await mob.waitForFunction(() => window.__diag && window.__diag.ready === true, {
 //      落到 -0.48；这里 0.62 就在 ±π 边界附近，取绝对值会把 -0.48 折成 0.48，
 //      看起来"和鼠标的 0.5 一样"，恰好把 2.2 倍的差距抹平 —— 曾经因此误判成失败。
 //      （camera.js 的 rotateBy 现已把 theta 归一化到 (-π, π]，数值不会无限漂。）
+//   d) **抬手后有一段惯性**（flick），theta 还会继续变。
+//      必须在抬手后、读数前调 haltInertia()，否则读到的是个还在变的值，
+//      断言会随机通过/失败（实测同一个用例一次 2.17、一次 3.60）。
+//      为了分离"跟手灵敏度"和"惯性"，这里读的是**抬手瞬间**的值。
 async function rotateBy(pointerType, px) {
   return mob.evaluate(async ({ pointerType, px }) => {
     window.__api.reset();
@@ -54,11 +58,14 @@ async function rotateBy(pointerType, px) {
     for (let i = 1; i <= steps; i++) {
       canvas.dispatchEvent(mk('pointermove', 100 + (px * i) / steps));
     }
+    // 读"抬手前"的值 = 手指实际拖出来的转量，不含惯性
+    const dragged = st.view.theta - theta0;
     window.dispatchEvent(mk('pointerup', 100 + px));
-    await new Promise((r) => setTimeout(r, 250));
+    window.__api.haltInertia();          // 掐掉惯性，避免污染后续用例
+    await new Promise((r) => setTimeout(r, 120));
 
     // 返回"偏航角的有符号变化量"，这是灵敏度系数唯一直接作用的对象
-    return +(st.view.theta - theta0).toFixed(4);
+    return +dragged.toFixed(4);
   }, { pointerType, px });
 }
 
@@ -94,8 +101,10 @@ const interrupt = await mob.evaluate(async () => {
     cancelable: true, button: 0, clientX: x, clientY: 420,
   });
   canvas.dispatchEvent(mk('pointerdown', 100));
-  for (let i = 1; i <= 5; i++) canvas.dispatchEvent(mk('pointermove', 100 + i * 10));
-  window.dispatchEvent(mk('pointerup', 150));
+  // 拖得长一点（10 步 × 15px = 150px），保证转量明显超过阈值
+  for (let i = 1; i <= 10; i++) canvas.dispatchEvent(mk('pointermove', 100 + i * 15));
+  window.dispatchEvent(mk('pointerup', 250));
+  window.__api.haltInertia();
 
   await new Promise((r) => setTimeout(r, 400)); // 超过动画剩余时长，确认没被"拉回去"
   return {
@@ -105,8 +114,80 @@ const interrupt = await mob.evaluate(async () => {
   };
 });
 check('飞行途中拖动会中断动画（不会被动画覆盖回去）',
-  interrupt.animatingBefore && !interrupt.animatingAfter && Math.abs(interrupt.delta) > 0.2,
+  interrupt.animatingBefore && !interrupt.animatingAfter && Math.abs(interrupt.delta) > 0.5,
   `动画中=${interrupt.animatingBefore} → 拖动后=${interrupt.animatingAfter}，theta 变化 ${interrupt.delta} rad`);
+
+// ---- 1c. 无限拖拽：横向能一直转、纵向能转到接近垂直 ----
+// 这是用户明确要的"不管手指怎么移动都能无限拖拽"。
+// 分两块验证：
+//   横向（theta）—— 数学上无界，连续 4 大圈都该转得动，不能出现"转不动了"；
+//   纵向（phi）—— 球坐标下有点顶（转过去就是头顶），但必须能一直推到接近垂直，
+//                 且在边界处平滑减速而不是一步卡死。
+const infinite = await mob.evaluate(async () => {
+  window.__api.reset();
+  await new Promise((r) => setTimeout(r, 1000));
+
+  const st = await import('./src/state.js');
+  const cam = await import('./src/camera.js');
+  const canvas = document.querySelector('#canvas-host canvas');
+  const mk = (type, x, y) => new PointerEvent(type, {
+    pointerId: 98, pointerType: 'touch', isPrimary: true, bubbles: true,
+    cancelable: true, button: 0, clientX: x, clientY: y,
+  });
+
+  // 用 panBy/rotateBy 直接驱动更可控（测的是"有没有上限"，不是事件管线）
+  // 横向：连续转 4 圈（4 × 2π ≈ 25.1 rad），分 40 次推进
+  let thetaTotal = 0;
+  let prev = st.view.theta;
+  const perStep = (Math.PI * 2 * 4) / 40;
+  for (let i = 0; i < 40; i++) {
+    cam.rotateBy(perStep, 0);
+    let d = st.view.theta - prev;
+    // 归一化后的跨度要折回 [-π, π] 才能累加
+    if (d > Math.PI) d -= Math.PI * 2;
+    if (d < -Math.PI) d += Math.PI * 2;
+    thetaTotal += d;
+    prev = st.view.theta;
+  }
+
+  // 纵向：从默认 phi 一路往上推 400 次，看能不能到接近垂直（phi → 0）
+  st.view.phi = 0.95;
+  for (let i = 0; i < 400; i++) cam.rotateBy(0, -0.02);
+  const phiAtTop = st.view.phi;
+  // 再一路往下推，看能不能到接近水平（phi → π/2）
+  for (let i = 0; i < 400; i++) cam.rotateBy(0, 0.02);
+  const phiAtBottom = st.view.phi;
+
+  // 边界手感：贴边时一小步位移应该被明显削弱（平滑减速，不是硬撞停）
+  st.view.phi = 0.06;                    // 已经贴近上边界
+  cam.rotateBy(0, -0.02);
+  const phiNearEdgeStep = Math.abs(0.06 - st.view.phi);
+  st.view.phi = 1.0;                     // 远离边界
+  cam.rotateBy(0, -0.02);
+  const phiMidStep = Math.abs(1.0 - st.view.phi);
+
+  window.__api.haltInertia();
+  return {
+    thetaTotal: +thetaTotal.toFixed(2),
+    phiAtTop: +phiAtTop.toFixed(4),
+    phiAtBottom: +phiAtBottom.toFixed(4),
+    range: window.__diag.phiRange(),
+    phiNearEdgeStep: +phiNearEdgeStep.toFixed(5),
+    phiMidStep: +phiMidStep.toFixed(5),
+  };
+});
+check('横向可以一直转（连续 4 圈 ≈ 25.1 rad 全部转出来了）',
+  Math.abs(infinite.thetaTotal) > 24,
+  `累计转过 ${infinite.thetaTotal} rad ≈ ${(infinite.thetaTotal * 57.3 / 360).toFixed(1)} 圈`);
+check('纵向能一直推到接近垂直俯视（phi 到下限）',
+  Math.abs(infinite.phiAtTop - infinite.range.min) < 0.01,
+  `推到 phi=${infinite.phiAtTop}（下限 ${infinite.range.min.toFixed(3)}，0 即正上方）`);
+check('纵向能一直拉到接近水平平视（phi 到上限）',
+  Math.abs(infinite.phiAtBottom - infinite.range.max) < 0.01,
+  `拉到 phi=${infinite.phiAtBottom}（上限 ${infinite.range.max.toFixed(3)}）`);
+check('贴边时位移被平滑削弱（是"越转越沉"而不是硬卡住）',
+  infinite.phiNearEdgeStep < infinite.phiMidStep * 0.6 && infinite.phiNearEdgeStep > 0,
+  `贴边一步 ${infinite.phiNearEdgeStep}，远离边界一步 ${infinite.phiMidStep}，比值 ${(infinite.phiNearEdgeStep / infinite.phiMidStep).toFixed(2)}`);
 
 // ---- 2. 详情卡：搜单条 → 默认收起；搜多条 → 自动进地图 ----
 await mob.evaluate(() => window.__api.reset());
@@ -135,8 +216,46 @@ check('收起后 3D 舞台占屏超过 45%', selState.stageH / selState.viewport
 
 await mob.screenshot({ path: 'shot-m-fixed-detail.png' });
 
+/**
+ * 用元素中心点的真实坐标点击。
+ *
+ * 为什么不用 `page.click(sel)`：body 设了 `position: fixed` 之后，
+ * Playwright 的"可点性检查"（等元素稳定、可滚入视口）会一直认为它不可点，
+ * 即使 `elementFromPoint` 拿到的最顶层元素就是目标本身，也会 5 秒超时。
+ * 实测布局完全正常（head 在 684~717px，视口 727px，没有被任何元素遮挡）。
+ * 改用"先取坐标、再派发真实鼠标事件"就稳定了。
+ */
+async function tapAt(page, sel, { requireInView = false } = {}) {
+  const pt = await page.evaluate(({ s, needVisible }) => {
+    const els = [...document.querySelectorAll(s)];
+    if (!els.length) return null;
+    for (const el of els) {
+      const r = el.getBoundingClientRect();
+      if (!r.width || !r.height) continue;
+      const cx = r.left + r.width / 2;
+      const cy = r.top + r.height / 2;
+      if (needVisible) {
+        // 中心点必须真的落在视口里，且命中测试拿到的就是自己（没被裁切/遮挡）
+        if (cy < 0 || cy > window.innerHeight) continue;
+        const hit = document.elementFromPoint(cx, cy);
+        if (!(hit === el || el.contains(hit))) continue;
+      }
+      return { x: Math.round(cx), y: Math.round(cy) };
+    }
+    // 回退：取第一个有尺寸的
+    for (const el of els) {
+      const r = el.getBoundingClientRect();
+      if (r.width && r.height) return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) };
+    }
+    return null;
+  }, { s: sel, needVisible: requireInView });
+  if (!pt) throw new Error('找不到可点的元素: ' + sel);
+  await page.mouse.click(pt.x, pt.y);
+  return pt;
+}
+
 // 点标题行展开
-await mob.click('#selinfo-head');
+await tapAt(mob, '#selinfo-head');
 await mob.waitForTimeout(400);
 const afterExpand = await mob.evaluate(() => ({
   expanded: window.__diag.selExpanded(),
@@ -150,12 +269,12 @@ check('展开后面板变高（说明折叠确实省了空间）', afterExpand.p
   `收起 ${selState.panelH}px → 展开 ${afterExpand.panelH}px`);
 
 // 再点一次收起
-await mob.click('#selinfo-head');
+await tapAt(mob, '#selinfo-head');
 await mob.waitForTimeout(300);
 check('再点一次可收回', (await mob.evaluate(() => window.__diag.selExpanded())) === false);
 
 // 重新搜索应重置为收起
-await mob.click('#selinfo-head');
+await tapAt(mob, '#selinfo-head');
 await mob.waitForTimeout(300);
 await mob.fill('#search', 'FZ-SP-00001');
 await mob.press('#search', 'Enter');
@@ -177,10 +296,41 @@ check('搜「杯子」命中 2 条', multiHits.count === 2 && multiHits.items ==
   `count=${multiHits.count} items=${multiHits.items}`);
 check('多条命中自动切到全屏地图', multiHits.mapMode === true, `mapMode=${multiHits.mapMode}`);
 
+// 地图模式下结果项必须仍然可点。
+// 这里锁住一个踩过的坑：为了"把画面让给地图"把面板压到 92px，
+// 而结果项本身有 101px 高 —— 整项被裁到面板外，元素在、看着也在，
+// 但手指点上去毫无反应（命中测试拿不到它）。
+// 断言方式：用 elementFromPoint 验证有结果项的中心点确实命中它自己。
+const itemHittable = await mob.evaluate(() => {
+  const items = [...document.querySelectorAll('.result-item')];
+  const ok = items.filter((el) => {
+    const r = el.getBoundingClientRect();
+    if (!r.width || !r.height) return false;
+    const cx = r.left + r.width / 2;
+    const cy = r.top + r.height / 2;
+    if (cy < 0 || cy > window.innerHeight) return false;
+    const hit = document.elementFromPoint(cx, cy);
+    return hit === el || el.contains(hit);
+  });
+  const r0 = items[0]?.getBoundingClientRect();
+  return {
+    total: items.length,
+    hittable: ok.length,
+    firstItemH: r0 ? Math.round(r0.height) : 0,
+    resultsH: Math.round(document.querySelector('.results')?.getBoundingClientRect().height || 0),
+  };
+});
+check('地图模式下结果项仍可点中（面板没把内容裁掉）',
+  itemHittable.hittable >= 1,
+  `可点 ${itemHittable.hittable}/${itemHittable.total} 项，单项高 ${itemHittable.firstItemH}px，列表可视高 ${itemHittable.resultsH}px`);
+
 await mob.screenshot({ path: 'shot-m-fixed-multi.png' });
 
 // 点列表里的一条 → 应退出地图并聚焦
-await mob.click('.result-item');
+// 注意：结果项在底部面板里，panel 有 max-height + 滚动，
+// 直接取 .result-item 的中心点可能落在被裁切的位置（点不中，甚至会穿到画布上去）。
+// 所以先挑"确实完整落在面板可视区内"的那一项再点。
+await tapAt(mob, '.result-item', { requireInView: true });
 await mob.waitForTimeout(1400);
 const afterPick = await mob.evaluate(() => ({
   mapMode: window.__diag.mapMode(),
@@ -200,7 +350,7 @@ await mob.waitForTimeout(1600);
 check('搜单条后处于 3D 模式（未进地图）',
   (await mob.evaluate(() => window.__diag.mapMode())) === false);
 
-await mob.click('#breadcrumb');
+await tapAt(mob, '#breadcrumb');
 await mob.waitForTimeout(900);
 
 const inMap = await mob.evaluate(() => ({
@@ -217,8 +367,12 @@ check('点面包屑进入全屏地图', inMap.mapMode === true && inMap.bodyClas
 check('按钮文字变为「3D 视角」', inMap.btnTxt === '3D 视角', `"${inMap.btnTxt}"`);
 check('面包屑右侧提示变为「返回 3D 视角」', inMap.bcAction === '返回 3D 视角', `"${inMap.bcAction}"`);
 check('地图操作提示条出现', inMap.mapBarVisible === true);
-check('地图下结果面板压到最矮（让出画面）', inMap.panelH <= 100,
-  `地图下面板 ${inMap.panelH}px（非地图时 ${selState.panelH}px）`);
+// 面板要"明显变矮"把画面让给地图，但**不能矮到装不下一条结果**：
+// 结果项约 101px，面板至少得留出这么多，否则整项被裁在可视区外，
+// 元素在、看着也在，手指点上去却没反应（见下面那条可点性断言）。
+check('地图下结果面板明显变矮、但仍容得下一项',
+  inMap.panelH < selState.panelH && inMap.panelH >= 110,
+  `地图下面板 ${inMap.panelH}px（非地图时 ${selState.panelH}px，需 ≥110 才放得下一条结果）`);
 check('竖屏地图横向视野足够装下 A~C 三区', inMap.bounds.right >= 30
   && inMap.bounds.right / inMap.bounds.zoom >= 25,
   `${JSON.stringify(inMap.bounds)} → 可见半宽 ${(inMap.bounds.right / inMap.bounds.zoom).toFixed(1)}（需 ≥25）`);
@@ -226,7 +380,7 @@ check('竖屏地图横向视野足够装下 A~C 三区', inMap.bounds.right >= 3
 await mob.screenshot({ path: 'shot-m-fixed-map.png' });
 
 // 再点一次面包屑 → 退出地图
-await mob.click('#breadcrumb');
+await tapAt(mob, '#breadcrumb');
 await mob.waitForTimeout(900);
 const outMap = await mob.evaluate(() => ({
   mapMode: window.__diag.mapMode(),
@@ -237,7 +391,7 @@ check('再点面包屑退出地图并还原文字',
   `mapMode=${outMap.mapMode} btn="${outMap.btnTxt}"`);
 
 // ---- 4. 地图点选：重新进地图，点右侧应飞到 C 区 ----
-await mob.click('#btn-map');
+await tapAt(mob, '#btn-map');
 await mob.waitForTimeout(900);
 const pickResult = await mob.evaluate(async () => {
   const host = document.getElementById('canvas-host');
@@ -268,7 +422,7 @@ check('点选右侧位置飞到 C 区（x 为正）', pickResult.target[0] > 5,
 // ---- 4b. 地图上直接点中货架 → 应定位到那一排（层由 3D 呈现） ----
 // 说明：俯视时同一排三层箱子垂直重叠，射线必然只打到最上面那层，
 //       所以"点箱位"只能确定到排。这里断言落点在 C-03 这一排。
-await mob.click('#btn-map');
+await tapAt(mob, '#btn-map');
 await mob.waitForTimeout(1000);
 const boxPick = await mob.evaluate(async () => {
   const host = document.getElementById('canvas-host');
@@ -305,7 +459,7 @@ check('点中货架后退出地图并弹出详情卡',
   `mapMode=${boxPick.mapMode} selVisible=${boxPick.selVisible}`);
 
 // 拖拽不应该被误判为点选
-await mob.click('#btn-map');
+await tapAt(mob, '#btn-map');
 await mob.waitForTimeout(900);
 const dragTest = await mob.evaluate(async () => {
   const host = document.getElementById('canvas-host');
@@ -325,12 +479,83 @@ const dragTest = await mob.evaluate(async () => {
 });
 check('拖拽平移不会误触发点选（仍在地图里）', dragTest === true, `mapMode=${dragTest}`);
 
-await mob.click('#breadcrumb');
-await mob.waitForTimeout(800);
+// 退出地图，回到 3D。这里**必须带超时**：
+// 之前的脚本写的是裸 click('#breadcrumb')，一旦面包屑处于 hidden
+// （地图模式下会被 CSS 隐藏 / 搜索结果为空时也是隐藏的），
+// Playwright 会一直等元素可点，整个测试就永久挂住 —— 排查了很久才定位到。
+if (await mob.evaluate(() => window.__diag.mapMode())) {
+  await mob.evaluate(() => window.__api.exitMap());
+  await mob.waitForTimeout(700);
+}
 
-// ---- 6. 全景自适应：竖屏距离要大于固定 52 ----
+// ---- 6. 全景自适应：竖屏要自动站远到能装下 A~C 三区 ----
+// 这条只依赖画布宽高比，和地图状态无关，放在地图外面测更稳
 const overviewRadius = await mob.evaluate(() => window.__diag.mapRadius());
 check('竖屏全景距离自适应 > 52', overviewRadius > 52, `radius=${overviewRadius.toFixed(1)}`);
+
+// 直接验证"货架两端是否真的在画面里"，而不是只看距离数字。
+// 这是真机截图里"C 区标签被右边缘切掉"的正面回归：
+// 把最左(A 区)与最右(C 区)的货架下端角点投影到 NDC，
+// x 必须都在 [-1, 1] 内，否则就是被裁掉了。
+const frustum = await mob.evaluate(async () => {
+  const cam = await import('./src/camera.js');
+  const sc = await import('./src/scene.js');
+  const st = await import('./src/state.js');
+  const V3 = sc.camera.position.constructor;
+  cam.flyToOverview(0);                 // 立刻到位，不等动画
+  await new Promise((r) => setTimeout(r, 250));
+  cam.updateCamera();
+  // A 区最左 / C 区最右，取货架底部与顶部两处高度
+  const pts = [];
+  for (const [x, y] of [[-22, 0], [22, 0], [-22, 6], [22, 6]]) {
+    const v = new V3(x, y, 5);
+    v.project(sc.camera);
+    pts.push({ x: +v.x.toFixed(3), y: +v.y.toFixed(3) });
+  }
+  return { pts, radius: +st.view.radius.toFixed(1), aspect: +sc.camera.aspect.toFixed(2) };
+});
+const allInside = frustum.pts.every((v) => Math.abs(v.x) <= 1 && Math.abs(v.y) <= 1);
+check('竖屏下 A~C 三区货架完整入画（不被左右裁掉）',
+  allInside,
+  `radius=${frustum.radius} aspect=${frustum.aspect}，货架两端 NDC x=${frustum.pts.map((p) => p.x).join(' / ')}（需都在 ±1 内）`);
+
+// ---- 6b. 页面锁死：手指在画布上滑动不能把整个页面滚走 ----
+// 这是真机反馈的核心问题：截图里地址栏收起/放下、页面被顶下去。
+// 成因有两层，都要断掉：
+//   1) html/body 必须一起 overflow:hidden + overscroll-behavior:none（只设 body 无效）
+//   2) 画布必须 touch-action:none，否则浏览器会把纵向滑动解读为滚动页面/下拉刷新
+const locked = await mob.evaluate(() => {
+  const cs = (el) => getComputedStyle(el);
+  const html = document.documentElement;
+  const canvas = document.querySelector('#canvas-host canvas');
+  // 试着程序化滚动，看能不能滚得动
+  window.scrollTo(0, 500);
+  const scrolledTo = window.scrollY;
+  window.scrollTo(0, 0);
+  return {
+    htmlOverflow: cs(html).overflow,
+    bodyOverflow: cs(document.body).overflow,
+    htmlOverscroll: cs(html).overscrollBehavior,
+    bodyOverscroll: cs(document.body).overscrollBehavior,
+    bodyPosition: cs(document.body).position,
+    canvasTouchAction: cs(canvas).touchAction,
+    hostTouchAction: cs(document.getElementById('canvas-host')).touchAction,
+    scrolledTo,
+    docScrollable: html.scrollHeight > html.clientHeight + 1,
+  };
+});
+check('html 与 body 都锁住滚动（不能只设 body）',
+  locked.htmlOverflow === 'hidden' && locked.bodyOverflow === 'hidden',
+  `html=${locked.htmlOverflow} body=${locked.bodyOverflow}`);
+check('关掉回弹与下拉刷新（overscroll-behavior: none）',
+  locked.htmlOverscroll === 'none' && locked.bodyOverscroll === 'none',
+  `html=${locked.htmlOverscroll} body=${locked.bodyOverscroll}`);
+check('3D 画布接管全部触摸（touch-action: none）',
+  locked.canvasTouchAction === 'none' && locked.hostTouchAction === 'none',
+  `canvas=${locked.canvasTouchAction} host=${locked.hostTouchAction}`);
+check('页面在布局层面就滚不动（position: fixed + 程序化滚动无效）',
+  locked.bodyPosition === 'fixed' && locked.scrolledTo === 0 && !locked.docScrollable,
+  `body=${locked.bodyPosition}，scrollTo(0,500) 后 scrollY=${locked.scrolledTo}，文档可滚=${locked.docScrollable}`);
 
 // ---- 7. M 键切换地图 + Esc 退出 ----
 await mob.evaluate(() => window.__api.reset());
@@ -371,7 +596,7 @@ check('桌面端搜索定位仍正常', dState.hi && dState.hi.outline === 1, JS
 check('桌面端详情卡也默认收起', dState.selVisible && dState.selCollapsed);
 
 // 桌面端点"地图"按钮
-await desk.click('#btn-map');
+await tapAt(desk, '#btn-map');
 await desk.waitForTimeout(900);
 const dMap = await desk.evaluate(() => ({
   mapMode: window.__diag.mapMode(),
@@ -382,7 +607,7 @@ check('桌面端地图视野可见半宽足够装下 A~C',
   dMap.bounds.right / dMap.bounds.zoom >= 25,
   `可见半宽 ${(dMap.bounds.right / dMap.bounds.zoom).toFixed(1)}（需 ≥25）`);
 
-await desk.click('#btn-map');
+await tapAt(desk, '#btn-map');
 await desk.waitForTimeout(900);
 check('再点一次退出地图', (await desk.evaluate(() => window.__diag.mapMode())) === false);
 

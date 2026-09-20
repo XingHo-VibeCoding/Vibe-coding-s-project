@@ -87,6 +87,10 @@ export function resetView() {
   // 如果正在看全屏地图，先退出（否则全景会飞到看不见的地方）
   if (state.topView) exitMap(false);
 
+  // 掐掉旋转惯性：复位是"强制回到全景"的指令，
+  // 若惯性还在跑，它会和 flyToOverview 的动画互相覆盖，镜头落不到全景上。
+  if (typeof onResetHook === 'function') onResetHook();
+
   state.marker.position.set(VIEW_CENTER.x, 0.06, VIEW_CENTER.z);
 
   // 按当前画布比例选全景距离：手机竖屏要站远一点，否则 C 区会被切出画面
@@ -100,3 +104,7 @@ export function resetView() {
   setResultCount(0);
   clearActiveResult();
 }
+
+/** 复位前的额外清理回调（由 main.js 注册为"停掉惯性"），避免反向依赖 controls */
+let onResetHook = null;
+export function setResetHook(fn) { onResetHook = fn; }

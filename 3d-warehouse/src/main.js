@@ -23,7 +23,7 @@ import { state } from './state.js';
 import { loadFromApi, loadFromTencentDocs } from './adapter.js';
 import { buildWarehouse, renderer, resize, composer, canvasHost } from './scene.js';
 import { updateCamera, stepAnimation, flyToOverview } from './camera.js';
-import { locate, resetView } from './emphasis.js';
+import { locate, resetView, setResetHook } from './emphasis.js';
 import { search } from './search.js';
 import { renderResults } from './panel.js';
 import { initControls } from './controls.js';
@@ -34,6 +34,13 @@ import { exposeApi, exposeError } from './api.js';
 
 /** 判定"轻点"的最大位移（像素）。超过这个距离视为拖拽，不触发地图点选。 */
 const TAP_SLOP = 8;
+
+/**
+ * initControls 的返回值（里面带着 stopInertia）。
+ * 为什么放在模块作用域而不是 init() 里：setMapUi 的回调需要在切地图时
+ * 掐掉旋转惯性，但那个回调注册在 initControls 之前，拿不到局部变量。
+ */
+let hooks = { stopInertia: () => {} };
 
 // ---------------------------------------------------------------------------
 // 界面事件绑定
@@ -202,7 +209,14 @@ async function init() {
   // 交互与界面
   // 把"地图状态变化"接到面板文字上：任何进出地图的路径都会自动同步按钮文案，
   // 不用在每个调用点都记得调一次 setMapUi。
-  setMapUiHook(setMapUi);
+  setMapUiHook((on) => {
+    setMapUi(on);
+    // 进地图 / 回 3D 时顺手掐掉正在跑的旋转惯性：
+    // 否则切视角的瞬间镜头还会自己飘一会儿，看起来像"按了没反应又乱动"。
+    // 用 hooks.stopInertia?.() 是因为 controls 的返回值只有测试会拿到，
+    // 这里做可选调用，避免把 main 和 controls 的初始化顺序绑死。
+    hooks.stopInertia?.();
+  });
   // 地图上点中箱位时，直接走标准定位流程（和点结果列表同一条路径）
   setPickBoxHook((boxId) => {
     const item = state.items.find((it) => it.boxId === boxId);
@@ -211,7 +225,9 @@ async function init() {
       setMapUi(false);
     }
   });
-  initControls(renderer.domElement);
+  hooks = initControls(renderer.domElement);
+  // 复位时也要掐掉旋转惯性（见 emphasis.resetView 的说明）
+  setResetHook(() => hooks.stopInertia?.());
   bindUi();
   setMapUi(false);
   renderResults([], locate);   // 先渲染一次空列表（带提示语）

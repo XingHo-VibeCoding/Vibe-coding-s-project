@@ -19,20 +19,54 @@
 
 * { box-sizing: border-box; }
 html, body { margin: 0; height: 100%; }
+
+/* ----------------------------------------------------------------------------
+   锁死页面的滚动 / 回弹 / 下拉刷新（真机反馈修复）
+   ----------------------------------------------------------------------------
+   现象：手指在 3D 画布上向上滑，除了画布在转，整个页面也跟着位移，
+        顶部浏览器地址栏跟着收起/放下，页面高度跳来跳去。
+
+   原因有两层，必须同时堵：
+   1) `touch-action`：之前画布是默认的 `auto`，浏览器有权把纵向滑动解读为
+      "滚动页面 / 下拉刷新"，与画布自己的旋转手势抢事件。
+   2) `html` 没有一起设 overflow —— 只写 `body { overflow: hidden }` 时，
+      部分移动浏览器会把滚动容器提升到 `html` 上，body 上那条规则形同虚设。
+      必须 `html, body` 同时 hidden，再配 `overscroll-behavior: none`
+      关掉横向回退与下拉刷新。
+
+   同时给 `body` 加 `position: fixed; inset: 0`：这是移动端最彻底的做法，
+   让页面在布局层面就不可能被滚动，也就不会触发地址栏收放导致的视口高度变化。
+   高度用 `100%` 而不是 `100vh` —— 移动端 `100vh` 取的是"地址栏收起时"的高度，
+   地址栏一出现内容就会被撑出屏幕，正是截图里那种"页面被顶下去"的效果。
+   ---------------------------------------------------------------------------- */
+html, body {
+  overflow: hidden;
+  overscroll-behavior: none;
+  width: 100%;
+  height: 100%;
+}
 body {
+  position: fixed;
+  inset: 0;
   font-family: system-ui, "Segoe UI", "Microsoft YaHei", "PingFang SC", sans-serif;
   color: var(--ink);
   background: var(--bg);
   -webkit-font-smoothing: antialiased;
-  overflow: hidden;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* 3D 画布：触摸由脚本完全接管（旋转 / 平移 / 捏合）。
+   双指捏合必须显式声明 pinch-zoom，否则浏览器会当作页面缩放。 */
+#canvas-host, #canvas-host canvas {
+  touch-action: none;
 }
 
 #app {
   display: grid;
   grid-template-columns: 1fr 340px;
   grid-template-rows: 58px 1fr;
-  height: 100vh;
-  width: 100vw;
+  height: 100%;
+  width: 100%;
 }
 
 /* ===================== 顶栏 ===================== */
@@ -304,14 +338,27 @@ body.map-mode .controls { bottom: 12px; }
   .panel { max-height: 40vh; }
   .panel-head { padding: 10px 12px; }
 
-  /* 地图模式下把面板压到最矮，把画面尽可能让给地图。
+  /* 地图模式下把面板压矮，把画面尽可能让给地图。
      注意：这条必须写在上面的 .panel 规则【之后】，
-     同优先级时后写的生效（CSS 层叠顺序）。 */
+     同优先级时后写的生效（CSS 层叠顺序）。
+
+     ⚠️ 高度不能压过头（真机 + 自动化都验证过的坑）：
+     结果项本身高约 101px，面板留的高度必须容得下一项，
+     否则整项被裁在面板外 —— 元素还在、"看起来"也在，
+     但手指点上去什么都不会发生（命中测试拿不到它）。
+     之前设成 92px / results 48px 就踩了这个坑：
+     列表里两条都点不了，等于"多条命中进地图后回不到具体某一项"。
+     现在给到 168px（够一项 + 面板头），并且让 .results 保持可滚动，
+     地图仍然拿到大部分画面。 */
   body.map-mode .panel {
-    max-height: 92px;
+    max-height: 168px;
     overflow: hidden;
   }
-  body.map-mode .results { max-height: 48px; }
+  body.map-mode .results {
+    max-height: 104px;
+    overflow-y: auto;      /* 多条时能滑，不再把内容裁掉 */
+    -webkit-overflow-scrolling: touch;
+  }
   body.map-mode .selinfo { display: none; }
 
   /* 结果卡片：整行可点，增大点击热区 */

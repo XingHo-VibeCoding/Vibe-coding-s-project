@@ -12,7 +12,8 @@ import { resetView, locate } from './emphasis.js';
 import { isMinimapActive } from './minimap.js';
 import { isMapMode, enterMap, exitMap, toggleMap, screenToGround } from './mapview.js';
 import { isSelInfoExpanded, toggleSelInfo, setMapUi } from './panel.js';
-import { defaultRadiusFor } from './config.js';
+import { defaultRadiusFor, PHI_MIN, PHI_MAX } from './config.js';
+import { haltInertia } from './controls.js';
 
 const round2 = (arr) => arr.map((n) => +n.toFixed(2));
 
@@ -50,11 +51,19 @@ export function exposeApi() {
       zoom: +topCam.zoom.toFixed(3),
     }),
     selExpanded: () => isSelInfoExpanded(),
+    // 俯仰角边界（供测试断言"能转到接近垂直"）
+    phiRange: () => ({ min: PHI_MIN, max: PHI_MAX }),
   };
 
   window.__api = {
     search,
     reset: resetView,
+    /**
+     * 停掉旋转惯性。
+     * 惯性会自己一直跑 rAF，测试若不停掉就读不到确定的 theta。
+     * 页面内的手势测试都应该在"读取结果前"先调一次。
+     */
+    haltInertia,
     locateById: (id) => {
       const it = state.byId.get(id);
       if (it) locate(it);

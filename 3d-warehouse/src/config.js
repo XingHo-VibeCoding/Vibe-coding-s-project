@@ -38,6 +38,23 @@ export const VIEW_CENTER = new THREE.Vector3(SCENE_CENTER.x, SCENE_CENTER.y, SCE
 /** 默认视角参数（球坐标：半径 / 俯仰角 / 偏航角） */
 export const DEFAULT_VIEW = { radius: 52, phi: 0.95, theta: 0.62, target: VIEW_CENTER.clone() };
 
+/**
+ * 俯仰角（phi）的可动范围。
+ *
+ * 为什么是 0.05 ~ 1.52（接近 0° ~ 87°）而不是 -90° ~ +90°：
+ * phi 是相机与"正上方"的夹角。phi=0 时相机在正上方垂直俯视，
+ * 此时 lookAt 的"上方向"退化成奇点，画面会翻转、抖动；
+ * phi 到 90° 时相机落到地平线高度，会钻进地面以下看到货架背面。
+ * 所以两端各留 0.05 弧度（约 3°）的余量。
+ *
+ * 关于"无限拖拽"：**偏航（theta）是无限的**，横向可以一直转下去、永远不到头。
+ * 纵向不可能真正无限——这是球坐标相机的固有性质，转到头顶再往上就没有"更上面"了，
+ * 任何 3D 软件都是到两端停住。能做的是把范围开到接近垂直、并且在两端平滑减速，
+ * 让手感是"转到顶了"而不是"卡住不动"（见 camera.js 的 rotateBy）。
+ */
+export const PHI_MIN = 0.05;
+export const PHI_MAX = Math.PI / 2 - 0.02;
+
 /** 相机动画默认时长（毫秒） */
 export const FLY_DURATION = 850;
 
@@ -63,21 +80,44 @@ export const ROTATE_SENSITIVITY = {
 };
 
 /**
- * 全景视角的自适应半径。
+ * 全景视角的自适应距离。
  *
- * 为什么需要：手机竖屏的水平可视角度远小于宽屏。以 50° 垂直 FOV 算，
- * 竖屏（aspect≈0.5）时水平 FOV 只有约 23°，固定 52 的距离装不下
- * A~C 三个区域（X 方向跨度 44 单位），C 区会被切出画面。
+ * 需要覆盖的世界范围：A 区在 x=-22、C 区在 x=+22，货架本身还占约 ±3，
+ * 所以横向要看到约 **±25 个单位**（`OVERVIEW_HALF_W`）。
  *
- * 为什么用分档而不是连续插值：连续插值会对 1.27 这种"其实够宽"的比例
- * 也做放大，桌面端会被无谓地推远。分档保证只有真正窄的画面才拉远。
+ * 为什么不能写死距离：相机垂直 FOV 固定 50°，能看到的水平半宽
+ * = 距离 × tan(25°) × aspect。手机竖屏 aspect≈0.75 时水平半宽只有
+ * 距离的 0.35 倍 —— 距离 52 只能看到 ±18，A~C 里必然有一头被切掉
+ * （真机截图里就是 C 区标签被右边缘切掉）。
+ *
+ * 所以这里**反算**：距离 = 需要的半宽 ÷ (tan(一半FOV) × aspect)，
+ * 再对宽屏取基准值兜底（宽屏本来就看得很全，没必要因为反算而推远）。
+ * 反算的好处是任何屏幕比例都自动正确，不用维护一张分档表。
  */
+export const CAMERA_FOV_DEG = 50;          // 与 scene.js 里透视相机的 fov 保持一致
+export const OVERVIEW_HALF_W = 27;         // 全景要看到的横向半宽（世界单位，含一点余量）
+
 export function defaultRadiusFor(aspect) {
   const a = aspect && aspect > 0 ? aspect : 1.6;
-  if (a < 0.75) return 66;   // 手机竖屏：必须拉到能装下 A~C
-  if (a < 0.95) return 60;   // 窄竖屏 / 平板竖屏
-  return DEFAULT_VIEW.radius; // 其余（含接近方形的桌面窗口）：保持基准 52
+  const halfFovRad = (CAMERA_FOV_DEG / 2) * (Math.PI / 180);
+  // 距离 = 目标半宽 / (tan(半FOV) × aspect)
+  const need = OVERVIEW_HALF_W / (Math.tan(halfFovRad) * a);
+  // 向上取整 + 不低于基准：宽屏时反算值可能小于 52，那就用 52，别把画面推近
+  return Math.max(DEFAULT_VIEW.radius, Math.ceil(need));
 }
 
-/** 手机长按判定为"平移模式"的时长（毫秒） */
-export const LONG_PRESS_MS = 350;
+/**
+ * 惯性轻扫（flick）参数 —— 抬手后让镜头继续转一会儿。
+ *
+ * 为什么需要：没有惯性时，想转 180° 得把手指在屏幕上倒腾两三回，
+ * 这是真机反馈"大角度要划好多下"的来源之一。加了惯性，
+ * 快速一扫就能转过一个大角度，符合手机上"拨一下转盘"的直觉。
+ *
+ * FLICK_MS     判定"这一下算不算轻扫"的回看时间窗。
+ *              超过这个时长还在慢慢挪 → 不算轻扫，不触发惯性。
+ * FLICK_MIN_PX 窗口内至少要移动这么多像素才算轻扫（防手抖误触）。
+ *              设成 12 而不是更大：手机上"轻轻一拨"的位移本来就不大，
+ *              门槛太高会让大部分轻扫都不生效。
+ */
+export const FLICK_MS = 110;
+export const FLICK_MIN_PX = 12;

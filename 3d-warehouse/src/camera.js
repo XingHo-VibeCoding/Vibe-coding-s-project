@@ -12,13 +12,19 @@
 import * as THREE from 'three';
 import {
   FLY_DURATION, RADIUS_MIN, RADIUS_MAX, DEFAULT_VIEW, defaultRadiusFor,
-  MAP_ZOOM_MIN, MAP_ZOOM_MAX,
+  MAP_ZOOM_MIN, MAP_ZOOM_MAX, PHI_MIN, PHI_MAX,
 } from './config.js';
 import { state, view, view2d } from './state.js';
 import { camera, topCam, renderPass, outline, placeTopCam } from './scene.js';
 
 /** 当前正在进行的相机动画（null = 静止） */
 let anim = null;
+
+/**
+ * 俯仰角靠近边界多少比例开始减速（0.25 = 最后四分之一的行程带阻尼）。
+ * 见 rotateBy 的说明：目的是"越转越沉、自然到头"，而不是硬撞停。
+ */
+const EDGE_DAMP_ZONE = 0.25;
 
 /** 平滑缓动（先加速后减速），让镜头飞行更自然 */
 export const easeInOut = (t) => (t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2);
@@ -135,15 +141,36 @@ export function flyToOverview(dur = FLY_DURATION) {
  * 表现就是"手指明明在动，画面却几乎不转 / 要划好几下才动一下"。
  * 用户主动拖动 = 接管镜头的意图，立刻中断动画，把控制权交回手指。
  *
- * theta 归一化到 (-π, π]：不加这步时，同一个朝向会有无数个等价值
- * （0.62、0.62±2π、0.62±4π……），一路转下去数字会无限增大。
- * 归一化后"当前朝向"永远是一个确定的值，数值也不会漂到浮点精度变差的区间。
- * 视觉上完全等价（相机只吃角度的三角函数值），对渲染没有任何影响。
+ * theta（偏航）**不设上下限**，横向可以一直转下去 —— 这是"无限拖拽"的主要来源。
+ * 只做归一化到 (-π, π]：同一个朝向只对应一个数值，避免数值随使用时长无界增长。
+ *
+ * phi（俯仰）有物理边界，到边界时**平滑衰减**而不是硬停：
+ * 硬夹会让人感觉"卡住了"，而按"离边界还剩多少"同比削减这一步的位移，
+ * 就是"越转越沉、自然到头"的手感（和滚轮/触控板的边缘阻尼同理）。
  */
 export function rotateBy(dTheta, dPhi) {
   stopFly();
   view.theta = wrapAngle(view.theta + dTheta);
-  view.phi = clamp(view.phi + dPhi, 0.05, Math.PI / 2 - 0.02);
+  view.phi = clamp(view.phi + dampToBounds(view.phi, dPhi, PHI_MIN, PHI_MAX), PHI_MIN, PHI_MAX);
+}
+
+/**
+ * 朝边界方向推进时的阻尼。
+ * @param {number} cur 当前值
+ * @param {number} delta 本步位移
+ * @param {number} lo 下界
+ * @param {number} hi 上界
+ * @returns {number} 实际生效的位移
+ */
+function dampToBounds(cur, delta, lo, hi) {
+  if (!delta) return 0;
+  // 离目标边界的剩余距离，占整个区间的多少（0=贴边，1=刚离开）
+  const remain = delta < 0
+    ? (cur - lo) / (hi - lo)
+    : (hi - cur) / (hi - lo);
+  if (remain >= EDGE_DAMP_ZONE) return delta;      // 还离得远，正常跟手
+  const k = Math.max(0, remain) / EDGE_DAMP_ZONE;  // 0 → 贴边（不动），1 → 可全速
+  return delta * k;
 }
 
 /** 把角度折算到 (-π, π]，保证同一个朝向只有一个表示 */
