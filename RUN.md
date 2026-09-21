@@ -157,9 +157,12 @@ https://e887bac984dd46d8a6df125eacdce7d8.sg.agentos-app.run
 │   └── api.js              # 对外测试接口（window.__diag / __api）
 ├── verify/                 # 自动化验收脚本 + 截图（非运行时依赖）
 │   ├── verify-refactor.mjs  # 重构验收：22 项端到端断言
-│   ├── verify-mobile-ux.mjs # 手机体验验收：37 项断言（手感/详情卡/地图/自适应）
-│   ├── verify-api.mjs       # 方案乙验收：7 项断言（含降级路径）
-│   └── shot-*.png           # 桌面 / 手机 / 地图 / 走后端的截图
+│   ├── verify-mobile-ux.mjs # 手机体验验收：66 项断言（手感/详情卡/地图/自适应/四态/标记环）
+│   ├── verify-api.mjs       # 方案乙验收：7 项断言（含降级路径）※需先切 api 模式
+│   └── shots/               # 跑脚本自动生成的截图（已 gitignore，不进仓库）
+│       └── shot-*.png       #   桌面 / 手机 / 地图 / 走后端
+├── shot-mainview-with-url.png  # 打卡交付截图（带地址栏，故意留在仓库里给人看）
+├── shot-marker-none.png        # 同上：标记环修复后的无搜索主视图
 ├── vendor/                 # 第三方库（本地内置，无需联网）
 │   ├── three.module.js     # Three.js 引擎
 │   ├── three.core.js
@@ -490,11 +493,37 @@ node verify/verify-refactor.mjs
 # 跑手机端体验验收（先确保 8010 服务已启动）
 node verify/verify-mobile-ux.mjs
 
-# 跑方案乙验收（先确保 8010 和 8011 都启动了）
+# 跑方案乙验收（有额外前置条件，见下）
 node verify/verify-api.mjs
 ```
 
 预期输出结尾：`===== 22/22 通过 =====`、`===== 66/66 通过 =====` 与 `===== 7/7 通过 =====`
+
+> **⚠️ `verify-api.mjs` 的两个前置条件**（不满足会失败，**不是代码坏了**）：
+> 1. 把 `src/config.js` 的 `DATA_SOURCE` 改成 `'api'`
+>    —— 默认是 `'demo'`，那个模式下前端直读本地 JSON，**根本不会发 API 请求**，
+>    "前端调用了后端"这条断言必然失败。
+> 2. 起后端：`cd backend && python server.py`（监听 8011）
+>
+> 跑完记得把 `DATA_SOURCE` **改回 `'demo'`**，否则线上静态版会拿不到数据。
+> 脚本已内置自检：模式不对时会直接提示，不会让你对着断言瞎猜。
+
+> **⚠️ 后端进程只在"同一条命令内"存活。**
+> 沙箱会在 shell 命令返回时清理掉后台子进程，所以
+> `python backend/server.py &` 之后**另一条**命令里访问 8011 会失败
+> （表现为 `502` 或 `ERR_CONNECTION_REFUSED`）。
+> 想验证后端，请把"起后端 + 跑测试"写在**同一条命令**里。
+
+### 8.3 截图去哪了
+
+跑测试会在 `verify/shots/` 下生成截图。这个目录**已加进 `.gitignore`**，不进仓库 ——
+理由是截图属于**产物**，跑一遍脚本就能重新生成，没必要占用公开仓库的体积，
+也避免"改了界面忘了更新截图"导致仓库里的图和实际不符。
+
+`3d-warehouse/` 根目录下另有 **2 张故意留在仓库里**的交付截图
+（`shot-mainview-with-url.png`、`shot-marker-none.png`），它们是打卡清单要求、
+需要给人直接看到的，所以在 `.gitignore` 里用 `!` 开了例外。
+新增这类交付图时，照 `.gitignore` 里的注释加一行 `!文件名` 即可。
 
 ### 8.1 写这套测试踩过的坑（给以后改测试的人）
 

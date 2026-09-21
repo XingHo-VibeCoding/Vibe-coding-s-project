@@ -214,7 +214,7 @@ check('收起时详情主体不占空间', selState.bodyDisplay === 'none', `dis
 check('收起后 3D 舞台占屏超过 45%', selState.stageH / selState.viewportH > 0.45,
   `stage=${selState.stageH}px / viewport=${selState.viewportH}px = ${(selState.stageH / selState.viewportH * 100).toFixed(1)}%`);
 
-await mob.screenshot({ path: 'shot-m-fixed-detail.png' });
+await mob.screenshot({ path: 'verify/shots/shot-m-fixed-detail.png' });
 
 /**
  * 用元素中心点的真实坐标点击。
@@ -324,7 +324,7 @@ check('地图模式下结果项仍可点中（面板没把内容裁掉）',
   itemHittable.hittable >= 1,
   `可点 ${itemHittable.hittable}/${itemHittable.total} 项，单项高 ${itemHittable.firstItemH}px，列表可视高 ${itemHittable.resultsH}px`);
 
-await mob.screenshot({ path: 'shot-m-fixed-multi.png' });
+await mob.screenshot({ path: 'verify/shots/shot-m-fixed-multi.png' });
 
 // 点列表里的一条 → 应退出地图并聚焦
 // 注意：结果项在底部面板里，panel 有 max-height + 滚动，
@@ -377,7 +377,7 @@ check('竖屏地图横向视野足够装下 A~C 三区', inMap.bounds.right >= 3
   && inMap.bounds.right / inMap.bounds.zoom >= 25,
   `${JSON.stringify(inMap.bounds)} → 可见半宽 ${(inMap.bounds.right / inMap.bounds.zoom).toFixed(1)}（需 ≥25）`);
 
-await mob.screenshot({ path: 'shot-m-fixed-map.png' });
+await mob.screenshot({ path: 'verify/shots/shot-m-fixed-map.png' });
 
 // 再点一次面包屑 → 退出地图
 await tapAt(mob, '#breadcrumb');
@@ -797,7 +797,7 @@ check('复位后标记环重新隐藏（不会留下无指代的红圈）',
   m2.visible === false && m2.hi === null,
   `visible=${m2.visible} highlight=${m2.hi}`);
 
-await desk.screenshot({ path: 'shot-desktop-fixed.png' });
+await desk.screenshot({ path: 'verify/shots/shot-desktop-fixed.png' });
 
 await browser.close();
 

@@ -146,8 +146,8 @@ check('手机端搜索可用', !!(await mobile.evaluate(() => window.__diag.high
   JSON.stringify(await mobile.evaluate(() => window.__diag.highlight())));
 check('手机端无报错', mErrors.length === 0, mErrors.slice(0, 2).join(' | '));
 
-await page.screenshot({ path: 'shot-desktop.png' });
-await mobile.screenshot({ path: 'shot-mobile.png' });
+await page.screenshot({ path: 'verify/shots/shot-desktop.png' });
+await mobile.screenshot({ path: 'verify/shots/shot-mobile.png' });
 
 await browser.close();
 
