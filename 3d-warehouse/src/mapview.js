@@ -40,8 +40,16 @@ export function enterMap() {
   };
 
   state.topView = true;
-  // 地图以场景中心为目标，缩放到刚好装下 A~C 三个区域
-  view2d.target.copy(new THREE.Vector3(VIEW_CENTER.x, VIEW_CENTER.y, VIEW_CENTER.z));
+
+  // 先把还在跑的相机动画掐掉，再设地图初始视角。
+  // 不掐的话，上一段 flyTo 会继续每帧把 view2d.target 拽向它的终点，
+  // 把我们刚设好的"场景中心"覆盖掉 —— 结果是进地图后画面偏在一边。
+  stopFly();
+
+  // 地图以场景中心为目标，缩放到刚好装下 A~C 三个区域。
+  // 每次都重置：上一次在地图里拖动平移过的话，这里不重置就会"接着上次的位置"，
+  // 用户按 M 进来看到的是半截货架，得自己再拖回去 —— 与"进来先看全貌"的预期不符。
+  view2d.target.set(VIEW_CENTER.x, VIEW_CENTER.y, VIEW_CENTER.z);
   view2d.zoom = MAP_ENTER_ZOOM;
 
   syncUi();
@@ -61,6 +69,9 @@ export function exitMap(fly = true) {
   const saved = state.saved3dView;
   if (saved) {
     if (fly) {
+      // 注意这里用的是 saved.target（3D 视角），而 flyTo 会同时把 view2d.target
+      // 也插值过去。地图退出后 view2d.target 本就没用了，但为了让"下次进地图"
+      // 从一个干净的值出发，这里不依赖它的残留值 —— enterMap 会无条件重置。
       flyTo(saved.target, saved.radius, saved.phi, saved.theta, 700);
     } else {
       // 直接落到目标视角，避免"点一下要等两秒"

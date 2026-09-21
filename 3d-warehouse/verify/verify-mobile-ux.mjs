@@ -419,6 +419,18 @@ check('点选后自动退出地图回到 3D', pickResult.mapMode === false, `map
 check('点选右侧位置飞到 C 区（x 为正）', pickResult.target[0] > 5,
   `target=${JSON.stringify(pickResult.target)} ground=${JSON.stringify(pickResult.ground)}`);
 
+// ---- 4a. 每次进地图，俯视相机都必须回到场景中心 ----
+// 这条是上面那条"飞到 C 区"能稳定成立的前提，也是真机手感的一部分：
+//   进地图 = 看全貌，所以不该"接着上次拖动的位置"。
+// 修复前 enterMap() 只在第一次进来时重置 view2d.target，
+// 一旦在地图里拖动过（或上一段 flyTo 动画还在往 view2d.target 写值），
+// 再进来画面就是偏的 —— 于是"点右侧"换算出来的世界坐标也跟着漂，
+// 表现成"同一个位置点两次，落点却不一样"。
+const mapCenter1 = await mob.evaluate(() => window.__diag.topCamPos());
+check('地图俯视相机对准场景中心（x≈0、z≈5）',
+  Math.abs(mapCenter1[0]) < 1 && Math.abs(mapCenter1[2] - 5) < 1,
+  `topCam=${JSON.stringify(mapCenter1)}`);
+
 // ---- 4b. 地图上直接点中货架 → 应定位到那一排（层由 3D 呈现） ----
 // 说明：俯视时同一排三层箱子垂直重叠，射线必然只打到最上面那层，
 //       所以"点箱位"只能确定到排。这里断言落点在 C-03 这一排。
@@ -756,6 +768,34 @@ check('转圈真的在动（animationName 不是 none）',
 // 收尾：复位，别把测试状态留给后面
 await desk.evaluate(() => { window.__api.setLoading(false); window.__api.clearLoadError(); window.__api.reset(); });
 await desk.waitForTimeout(600);
+
+// ---- H7. 地面标记环只在「有目标箱位」时出现 ----
+// 这个环的语义是"目标在这里"。没有目标时它若可见，空地正中央就杵着一个红圈，
+// 用户会当成错误提示（真机截图反馈过）。所以要锁死三态：初始藏、命中显、复位藏。
+const markerAt = () => desk.evaluate(async () => {
+  const st = await import('./src/state.js');
+  const m = st.state.marker;
+  return { visible: m?.visible, x: m?.position.x, z: m?.position.z, hi: st.state.highlightBoxId };
+});
+
+const m0 = await markerAt();
+check('初始无目标时，地面标记环必须隐藏（空地中央不能有裸奔红圈）',
+  m0.visible === false && m0.hi === null,
+  `visible=${m0.visible} highlight=${m0.hi}`);
+
+await desk.evaluate(() => window.__api.search('FZ-SP-00008'));
+await desk.waitForTimeout(1400);
+const m1 = await markerAt();
+check('定位到单个箱位后，地面标记环现身且挪到目标脚下',
+  m1.visible === true && m1.hi === 'A-03-02' && (m1.x !== 0 || m1.z !== 5),
+  `visible=${m1.visible} pos=[${m1.x},${m1.z}] highlight=${m1.hi}`);
+
+await desk.evaluate(() => window.__api.reset());
+await desk.waitForTimeout(1400);
+const m2 = await markerAt();
+check('复位后标记环重新隐藏（不会留下无指代的红圈）',
+  m2.visible === false && m2.hi === null,
+  `visible=${m2.visible} highlight=${m2.hi}`);
 
 await desk.screenshot({ path: 'shot-desktop-fixed.png' });
 

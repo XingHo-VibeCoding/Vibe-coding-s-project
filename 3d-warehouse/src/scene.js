@@ -183,6 +183,12 @@ function buildMarker() {
   marker.rotation.x = -Math.PI / 2;
   marker.position.set(VIEW_CENTER.x, 0.06, VIEW_CENTER.z);
   marker.renderOrder = 5;
+  // 初始就隐藏：这个环的语义是"目标箱位在这里"，没有任何目标时它不该出现。
+  // 之前是建好就 visible，且 resetView() 只把它挪回场景中央而不隐藏 ——
+  // 于是页面一打开空地正中间就杵着一个红圈，看着像个错误提示，
+  // 用户会以为是"哪里坏了"（真机截图反馈确认过）。
+  // 显示时机由 emphasis.js 的 locate()/resetView() 决定。
+  marker.visible = false;
   scene.add(marker);
   state.marker = marker;
 }

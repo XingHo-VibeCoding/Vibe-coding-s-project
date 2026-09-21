@@ -64,8 +64,9 @@ export function locate(item) {
   const pos = positionFor(item.zone, item.row, item.level);
   const target = new THREE.Vector3(pos.x, pos.y, pos.z);
 
-  // 地面标记环挪到目标脚下
+  // 地面标记环挪到目标脚下，并让它现身（它的语义就是"目标在这里"）
   state.marker.position.set(pos.x, 0.06, pos.z);
+  state.marker.visible = true;
 
   // 俯视模式下顺手把 2D 缩放拉近一点（至少 1.6），透视模式传 null 表示不动
   const z2 = state.topView ? Math.max(1.6, view2d.zoom) : null;
@@ -91,6 +92,10 @@ export function resetView() {
   // 若惯性还在跑，它会和 flyToOverview 的动画互相覆盖，镜头落不到全景上。
   if (typeof onResetHook === 'function') onResetHook();
 
+  // 复位 = 清掉一切指向某个箱位的标记，所以标记环要**藏起来**，
+  // 而不是像以前那样只挪回场景中央 —— 那样会留下一个没有任何指代的红圈。
+  // 位置仍一起归位，是为了下次 locate() 时它是从中央出发，动画连贯。
+  state.marker.visible = false;
   state.marker.position.set(VIEW_CENTER.x, 0.06, VIEW_CENTER.z);
 
   // 按当前画布比例选全景距离：手机竖屏要站远一点，否则 C 区会被切出画面
