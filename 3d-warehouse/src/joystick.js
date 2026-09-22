@@ -169,7 +169,7 @@ export function initJoystick() {
   // 为什么要这样：摇杆盘的尺寸必须和 config.JOYSTICK.radius 严格一致 ——
   // track() 是拿"像素偏移 ÷ radius"算强度的，两边一旦不一致，
   // 就会出现"推到底也只有半速"或"没推满就满速"的错。
-  // 与其在 CSS 里再抄一个 92px（改一处漏一处），不如让 JS 传过去，单一数据源。
+  // 与其在 CSS 里再抄一个 104px（改一处漏一处），不如让 JS 传过去，单一数据源。
   baseEl.style.setProperty('--joystick-r', JOYSTICK.radius + 'px');
 
   baseEl.addEventListener('pointerdown', onDown);

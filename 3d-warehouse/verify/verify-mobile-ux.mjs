@@ -846,19 +846,30 @@ check('触摸设备上摇杆可见', joy && joy.visible === true,
 check('摇杆在**左下角**（left / bottom 都贴着边）',
   joy.left <= 40 && joy.bottom <= 40,
   `left=${joy.left} bottom=${joy.bottom}`);
-// 盘尺寸必须和 JS 算强度用的半径严格一致，否则会出现"推到底只有半速"
+// 盘尺寸必须和 JS 算强度用的半径严格一致，否则会出现"推到底只有半速"。
+// ⚠️ 期望值**从页面里读 config 真实值**，不写死数字 ——
+//    写死的话每次调手感参数（半径、速度）都要回来改测试，
+//    改漏一处就变成"测试说不对、其实代码是对的"，
+//    更糟的是有人为了让它变绿去改断言，而不是改代码。
+//    读真值才是真的在验"CSS 和 JS 用的是同一个数"。
+const joyCfg = await mob.evaluate(async () => {
+  const m = await import('./src/config.js');
+  return { radius: m.JOYSTICK.radius, speed: m.JOYSTICK.speed };
+});
 check('摇杆盘尺寸 = config.JOYSTICK.radius × 2（CSS 与 JS 同源）',
-  Math.abs(joy.w - 92) <= 2 && Math.abs(joy.h - 92) <= 2,
-  `${joy.w}×${joy.h}（期望 92×92）`);
+  Math.abs(joy.w - joyCfg.radius * 2) <= 2 && Math.abs(joy.h - joyCfg.radius * 2) <= 2,
+  `${joy.w}×${joy.h}（config.radius=${joyCfg.radius} → 期望 ${joyCfg.radius * 2}）`);
 
-// 按钮必须让位，否则和摇杆挤在同一个角落
+// 按钮必须让位，否则和摇杆挤在同一个角落。
+// 判据用**几何关系**（按钮左沿必须落在摇杆右沿之外），不是"left > 某个数字"——
+// 后者在摇杆变大后会失效（数字是死的、盘是活的）。
 const ctl = await mob.evaluate(() => {
   const r = document.querySelector('.controls').getBoundingClientRect();
   return { left: Math.round(r.left), fromRight: Math.round(window.innerWidth - r.right) };
 });
-check('视图按钮让位到右下（左下整个让给摇杆）',
-  ctl.fromRight <= 40 && ctl.left > 60,
-  `按钮 left=${ctl.left}，距右边=${ctl.fromRight}`);
+check('视图按钮让位到右下，且与摇杆**不重叠**（左下整个让给摇杆）',
+  ctl.fromRight <= 40 && ctl.left >= joy.left + joy.w,
+  `按钮 left=${ctl.left}，摇杆右沿=${joy.left + joy.w}，间距=${ctl.left - joy.left - joy.w}px`);
 
 // ---- 核心：推摇杆 → 注视点真的移动 ----
 // ⚠️ 读 t0 之前必须 settleView()。复位动画在这个环境里要跑近 2 秒，
@@ -1228,6 +1239,24 @@ for (const size of LAND_SIZES) {
         drawerVar: document.getElementById('panel').style.getPropertyValue('--drawer-h') || null,
         cards: cards.length,
         cardHs: cards.map((c) => Math.round(c.getBoundingClientRect().height)),
+        // 摇杆的盒子。横屏舞台只有 311~341px 高，而摇杆是**固定 px** 尺寸 ——
+        // 调大半径时最容易在这里翻车（越界 / 压到侧栏），所以横屏也要量。
+        joy: (() => {
+          const el = document.getElementById('joystick');
+          if (!el) return null;
+          const r = el.getBoundingClientRect();
+          return {
+            visible: getComputedStyle(el).display !== 'none',
+            l: Math.round(r.left), r: Math.round(r.right),
+            b: Math.round(r.bottom), w: Math.round(r.width), h: Math.round(r.height),
+          };
+        })(),
+        ctl: (() => {
+          const el = document.querySelector('.controls');
+          if (!el) return null;
+          const r = el.getBoundingClientRect();
+          return { l: Math.round(r.left), r: Math.round(r.right) };
+        })(),
         innerH: window.innerHeight,
         innerW: window.innerWidth,
       };
@@ -1258,6 +1287,24 @@ for (const size of LAND_SIZES) {
     check(`[${tag}] 3D 舞台拿到绝大部分高度（≥80%）`,
       L0.stage.h / L0.innerH >= 0.8,
       `stage=${L0.stage.h}/${L0.innerH} = ${(L0.stage.h / L0.innerH * 100).toFixed(0)}%`);
+
+    // ---- 摇杆在横屏下必须"装得下、不越界" ----
+    // 为什么专门测：摇杆是**固定 px** 尺寸（由 config.JOYSTICK.radius 决定），
+    // 而横屏舞台只有 311~341px 高、416~625px 宽。半径一调大，
+    // 最可能出问题的就是这两个方向：纵向被裁、横向压到侧栏。
+    check(`[${tag}] 摇杆在横屏可见，且完整落在 3D 列内（不越界、不压侧栏）`,
+      L0.joy && L0.joy.visible === true
+      && L0.joy.r <= L0.panel.l
+      && L0.joy.b <= L0.innerH + 1
+      && L0.joy.h > 0 && L0.joy.l >= 0,
+      L0.joy
+        ? `摇杆 ${L0.joy.l}~${L0.joy.r}（${L0.joy.w}×${L0.joy.h}），面板左沿=${L0.panel.l}，下沿=${L0.joy.b}/${L0.innerH}`
+        : 'null');
+    check(`[${tag}] 横屏下摇杆与视图按钮不重叠（左下/右下各自站住）`,
+      L0.joy && L0.ctl && (L0.joy.l >= L0.ctl.r || L0.joy.r <= L0.ctl.l),
+      L0.joy && L0.ctl
+        ? `摇杆 ${L0.joy.l}~${L0.joy.r}，按钮 ${L0.ctl.l}~${L0.ctl.r}`
+        : 'null');
 
     // ---- 搜多条 → 自动进地图 → 从列表里挑一条 → 回 3D ----
     // 这一段是核心回归：点击前后**面板高度必须不变**，且列表要仍然装得下结果卡。

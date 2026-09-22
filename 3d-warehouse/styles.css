@@ -218,15 +218,15 @@ body.map-mode .controls { bottom: 12px; }
  * 长什么样、多大、怎么过渡都归 CSS。
  *
  * 尺寸来自 --joystick-r（由 joystick.js 从 config.JOYSTICK.radius 写进来）。
- * 为什么不在 CSS 里直接写 92px：摇杆盘的尺寸必须和 JS 算强度用的半径严格一致，
+ * 为什么不在 CSS 里直接写 104px：摇杆盘的尺寸必须和 JS 算强度用的半径严格一致，
  * 抄两份迟早改漏一处，导致"推到底只有半速"这种难查的错。 */
 .joystick {
   display: none;
   position: absolute;
   left: 16px;
   bottom: 16px;
-  width: calc(var(--joystick-r, 46px) * 2);
-  height: calc(var(--joystick-r, 46px) * 2);
+  width: calc(var(--joystick-r, 52px) * 2);
+  height: calc(var(--joystick-r, 52px) * 2);
   border-radius: 50%;
   background: rgba(255, 255, 255, 0.44);
   border: 1px solid rgba(20, 30, 40, 0.18);
@@ -244,8 +244,8 @@ body.map-mode .joystick { display: none; }
 .joystick-knob {
   position: absolute;
   inset: 0; margin: auto;              /* 自动居中，不依赖手算 margin */
-  width: calc(var(--joystick-r, 46px) * 0.92);
-  height: calc(var(--joystick-r, 46px) * 0.92);
+  width: calc(var(--joystick-r, 52px) * 0.92);
+  height: calc(var(--joystick-r, 52px) * 0.92);
   border-radius: 50%;
   background: rgba(255, 255, 255, 0.94);
   border: 1px solid rgba(20, 30, 40, 0.22);
