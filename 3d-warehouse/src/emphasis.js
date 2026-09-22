@@ -17,7 +17,7 @@ import {
   showSelInfo, hideSelInfo, hideBreadcrumb, hideNoHit,
   setBreadcrumb, renderResults, setResultCount, clearInput,
   clearActiveResult, markActiveResult,
-  revealResults, setDrawerLevel,
+  revealResults, setDrawerLevel, resetPanelState,
 } from './panel.js';
 
 /**
@@ -111,6 +111,26 @@ export function resetView() {
   state.marker.visible = false;
   state.marker.position.set(VIEW_CENTER.x, 0.06, VIEW_CENTER.z);
 
+  // ⚠️ 面板与抽屉要**先**复位，再算全景距离。顺序不能反。
+  //
+  // 理由：竖屏下面板占网格第 3 行，它一收起，stage 就变高、画布比例跟着变；
+  // 而 flyToOverview() 是拿 camera.aspect **反算**全景距离的。
+  // 顺序反了的话，距离会按"面板还开着"的旧比例算出来 ——
+  // 画布随后变高，那个距离就偏近了，表现为复位后两侧货架被切出画面。
+  // （自动化实测：先 fly 后收起，摇杆用例读到的起点是 [-7.83, 3.14, 5.46]，
+  //   而不是终点 [0, 3, 5] —— 镜头还在飞，后续位移断言全跟着偏。）
+  //
+  // 抽屉收回 peek：复位是"回到初始全景"的意思，
+  // 初始状态就是面板最小、3D 视野最大。若不复位抽屉，
+  // 用户点完"全景"会发现 3D 还是被半开的结果面板挡着，观感上像没复位干净。
+  // （横屏/桌面下 setDrawerLevel 内部会判掉，不会误改布局）
+  setDrawerLevel('peek');
+  // 面板同样收回初始态（收起）。
+  // ⚠️ 用 resetPanelState 而不是 closePanel：后者会记下"用户收起过"，
+  // 于是用户点一次"全景"之后就再也等不到"首次搜索自动弹出"了 ——
+  // 而屏幕上没有任何东西提示这是刚才那次复位造成的。
+  resetPanelState();
+
   // 按当前画布比例选全景距离：手机竖屏要站远一点，否则 C 区会被切出画面
   flyToOverview();
 
@@ -120,12 +140,6 @@ export function resetView() {
   clearInput();
   renderResults([], locate);
   setResultCount(0);
-
-  // 抽屉也一并收回 peek：复位是"回到初始全景"的意思，
-  // 初始状态就是面板最小、3D 视野最大。若不复位抽屉，
-  // 用户点完"全景"会发现 3D 还是被半开的结果面板挡着，观感上像没复位干净。
-  // （横屏/桌面下 setDrawerLevel 内部会判掉，不会误改布局）
-  setDrawerLevel('peek');
   clearActiveResult();
 }
 

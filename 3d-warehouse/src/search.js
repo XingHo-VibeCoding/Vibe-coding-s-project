@@ -14,12 +14,21 @@ import { state } from './state.js';
 import { outline } from './scene.js';
 import {
   renderResults, setResultCount, setNoHit, hideNoHit, hideBreadcrumb, getInputValue,
+  revealResults,
 } from './panel.js';
 import { locate, resetView } from './emphasis.js';
 import { enterMap } from './mapview.js';
 
 /**
  * 收尾：把命中结果写进列表，并根据数量决定要不要自动定位。
+ *
+ * `revealResults()` 必须紧跟 `renderResults()` 调用，且**顺序不能反**：
+ * 它要数列表里渲染出了几张卡片，来决定竖屏下要不要把抽屉推到半开。
+ * 先 reveal 后 render 的话数到的是 0 张，面板弹出来了但高度还是最小的那一档。
+ *
+ * 面板**收着**的时候它会负责把面板弹出来 —— 这就是"第一次搜索列表才出现"。
+ * 用户主动收起过则不弹，只更新标签条数（见 panel.js 的 userCollapsed）。
+ *
  * @param {object[]} hits 命中的物资记录
  * @returns {object[]} 原样返回 hits（方便调用方链式处理）
  */
@@ -35,10 +44,14 @@ export function finishSearch(hits) {
     );
     hideBreadcrumb();
     renderResults([], locate);
+    // 搜不到也要把列表亮出来 —— 用户得看见"没找到"和那行建议关键词，
+    // 否则搜索结果只体现在一个飘过的提示条上，转头就没了。
+    revealResults();
     return [];
   }
 
   renderResults(hits, locate);
+  revealResults();
 
   // 只命中一条 → 直接飞过去，省掉一次点击
   if (hits.length === 1) {

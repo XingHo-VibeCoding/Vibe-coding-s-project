@@ -170,7 +170,12 @@ export function initJoystick() {
   // track() 是拿"像素偏移 ÷ radius"算强度的，两边一旦不一致，
   // 就会出现"推到底也只有半速"或"没推满就满速"的错。
   // 与其在 CSS 里再抄一个 104px（改一处漏一处），不如让 JS 传过去，单一数据源。
-  baseEl.style.setProperty('--joystick-r', JOYSTICK.radius + 'px');
+  //
+  // 写在 :root 而不是 baseEl 上：竖屏下结果面板的收起标签要**排在摇杆上方**
+  // （`bottom: calc(var(--joystick-r) * 2 + 32px)`），它读的是同一个值。
+  // 写在 baseEl 上时变量只沿 DOM 树往下继承，标签（.stage 的兄弟）读不到，
+  // 只能再抄一个数字 —— 正是这里要避免的事。
+  document.documentElement.style.setProperty('--joystick-r', JOYSTICK.radius + 'px');
 
   baseEl.addEventListener('pointerdown', onDown);
   baseEl.addEventListener('pointermove', onMove);

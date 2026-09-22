@@ -88,7 +88,10 @@
       <div class="hint-bar" id="hint-bar">拖拽旋转 · 滚轮缩放 · 右键平移 · 回车搜索 · R 全景</div>    </main>
 
     <!-- 右侧结果面板 -->
-    <aside class="panel" id="panel" aria-label="定位结果">
+    <!-- data-open="false" 直接写在标签上，而不是等 JS 起来再设：
+         否则首屏会先按"展开"渲染一帧，再被脚本收回去 —— 一次可见的闪动。
+         panel.js 负责之后的切换（初始关 → 首次搜索开 → 手动收起后不再自动开）。 -->
+    <aside class="panel" id="panel" data-open="false" aria-label="定位结果">
       <!-- 抽屉把手：竖屏手机上把面板往上拖可展开、往下拖可收起。
            它只是"抓取区"，真正的拖拽逻辑在 panel.js 的 initPanelDrawer()。
            放在 panel-head 里是为了不额外占一行高度。 -->
@@ -97,7 +100,15 @@
       </div>
       <div class="panel-head">
         <span class="ph-title"><i data-lucide="list-filter" class="ph-icon"></i>定位结果</span>
-        <span id="result-count" class="count">0</span>
+        <span class="ph-right">
+          <span id="result-count" class="count">0</span>
+          <!-- 收起按钮：把面板收成右侧（竖屏是底部）的一个小标签，把 3D 让出来。
+               收起后标签常驻，点它就能再展开 —— 见 panel.js 的开合状态机。 -->
+          <button id="panel-collapse" class="panel-collapse" type="button"
+                  title="收起列表" aria-label="收起定位结果列表">
+            <i data-lucide="chevron-right" class="pc-icon"></i>
+          </button>
+        </span>
       </div>
       <div id="results" class="results">
         <div class="hint">输入物资编号 / 名称 / 区域 / 货架排号 / 箱位开始定位。</div>
@@ -114,6 +125,18 @@
         </button>
       </div>
     </aside>
+
+    <!-- 面板收起后常驻的标签：点它重新展开列表。
+         为什么必须有它：面板一收起，用户就没有任何入口能把它叫回来了。
+         位置由 CSS 按屏幕方向决定 —— 桌面/横屏在右侧边缘，竖屏在底部。
+         上面的条数是**收起状态下唯一还能看到结果变化的地方**：
+         用户主动收起后，后续搜索不再撞开面板，只在这里更新数字并点亮红点。 -->
+    <button class="panel-tab" id="panel-tab" type="button" aria-label="展开定位结果列表">
+      <i data-lucide="list-filter" class="pt-icon"></i>
+      <span class="pt-text">定位结果</span>
+      <span class="pt-count" id="panel-tab-count">0</span>
+      <span class="pt-dot" aria-hidden="true"></span>
+    </button>
   </div>
 
   <script src="./vendor/lucide.js"></script>

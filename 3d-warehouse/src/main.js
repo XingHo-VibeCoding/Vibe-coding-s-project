@@ -31,7 +31,7 @@ import { initControls } from './controls.js';
 import { initJoystick } from './joystick.js';
 import { initMinimap, sizeMinimap, renderMinimap } from './minimap.js';
 import { toggleMap, enterMap, exitMap, isMapMode, pickOnMap, setMapUiHook, setPickBoxHook } from './mapview.js';
-import { setMapUi, toggleSelInfo, initPanelDrawer } from './panel.js';
+import { setMapUi, toggleSelInfo, initPanel, setPanelToggleHook } from './panel.js';
 import { exposeApi, exposeError } from './api.js';
 
 /** 判定"轻点"的最大位移（像素）。超过这个距离视为拖拽，不触发地图点选。 */
@@ -261,8 +261,13 @@ async function init() {
   hooks = initControls(renderer.domElement);
   // 复位时也要掐掉旋转惯性（见 emphasis.resetView 的说明）
   setResetHook(() => hooks.stopInertia?.());
-  // 抽屉把手：竖屏手机上可上下拖动改高度（横屏/桌面自动不生效）
-  initPanelDrawer();
+  // 面板开合后要重算画布尺寸。
+  // 竖屏下面板占网格第 3 行，它一收起来那一行就塌陷、stage 随之变高 ——
+  // 画布必须跟着重算，否则 3D 仍按旧高度渲染，底部会空出一条。
+  // （桌面/横屏的面板是浮在 3D 上的，stage 尺寸不变，这里调了是幂等的空转。）
+  setPanelToggleHook(() => { resize(); sizeMinimap(); });
+  // 面板：收起 / 展开 + 竖屏抽屉拖拽（横屏/桌面自动不生效）
+  initPanel();
   // 左下虚拟摇杆：触摸设备上一根手指"走过去"（桌面端自动不显示）
   joystick = initJoystick();
   bindUi();

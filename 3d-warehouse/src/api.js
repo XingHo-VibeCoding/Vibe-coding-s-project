@@ -11,7 +11,7 @@ import { search } from './search.js';
 import { resetView, locate } from './emphasis.js';
 import { isMinimapActive } from './minimap.js';
 import { isMapMode, enterMap, exitMap, toggleMap, screenToGround } from './mapview.js';
-import { isSelInfoExpanded, toggleSelInfo, setMapUi, setLoading, setLoadError, clearLoadError, setDrawerLevel, getDrawerLevel, revealResults } from './panel.js';
+import { isSelInfoExpanded, toggleSelInfo, setMapUi, setLoading, setLoadError, clearLoadError, setDrawerLevel, getDrawerLevel, revealResults, isPanelOpen, isPanelCollapsedByUser, openPanel, closePanel, togglePanel } from './panel.js';
 import { defaultRadiusFor, PHI_MIN, PHI_MAX } from './config.js';
 import { haltInertia } from './controls.js';
 
@@ -85,6 +85,38 @@ export function exposeApi(joystick) {
     /** 每个档位对应的 CSS 变量值（供测试断言"档位 → 高度"的映射） */
     drawerRatios: () => ({ peek: 0.27, half: 0.5, full: 0.82 }),
     /**
+     * 结果面板（可收起悬浮窗）的状态。
+     *
+     * open / collapsedByUser 读的是内部状态机；
+     * visible / tabVisible / tabCount / tabNew 读的是**实际渲染结果** ——
+     * 测试要验的是"用户看不看得见"，不是"JS 以为该显示"。
+     * 两者会分叉：CSS 没写好时 JS 说"开"，屏幕上却什么都没有。
+     */
+    panel: () => {
+      const p = document.getElementById('panel');
+      const tab = document.getElementById('panel-tab');
+      const pr = p ? p.getBoundingClientRect() : null;
+      const tr = tab ? tab.getBoundingClientRect() : null;
+      const style = p ? getComputedStyle(p) : null;
+      return {
+        open: isPanelOpen(),
+        collapsedByUser: isPanelCollapsedByUser(),
+        attr: p ? (p.dataset.open ?? null) : null,
+        // 真正"看得见"的判定：没被 display 掉、不透明、而且没被滑出屏幕右边
+        visible: !!pr && style.display !== 'none'
+          && Number(style.opacity) > 0.01 && pr.left < window.innerWidth,
+        width: pr ? Math.round(pr.width) : 0,
+        tabVisible: !!tr && getComputedStyle(tab).display !== 'none',
+        tabCount: document.getElementById('panel-tab-count')?.textContent ?? null,
+        tabNew: tab ? tab.classList.contains('is-new') : false,
+        tabBox: tr ? {
+          left: Math.round(tr.left), right: Math.round(tr.right),
+          bottom: Math.round(window.innerHeight - tr.bottom),
+          top: Math.round(tr.top),
+        } : null,
+      };
+    },
+    /**
      * 左下虚拟摇杆的状态。
      *
      * visible 读的是**实际渲染结果**（display 计算值），不是 body 上的 class ——
@@ -136,6 +168,11 @@ export function exposeApi(joystick) {
     setDrawer: (level) => { setDrawerLevel(level); return getDrawerLevel(); },
     getDrawer: getDrawerLevel,
     revealResults,
+    // ---- 结果面板开合（供自动化测试直接切状态，不用去模拟点击坐标） ----
+    openPanel: () => { openPanel(); return isPanelOpen(); },
+    closePanel: () => { closePanel(); return isPanelOpen(); },
+    togglePanel: () => { togglePanel(); return isPanelOpen(); },
+    isPanelOpen,
     // ---- 左下虚拟摇杆（供自动化测试直接推摇杆，不用模拟一整套指针坐标） ----
     setJoystick: (x, y) => { joystick.setVec(x, y); return joystick.getVec(); },
     getJoystick: () => joystick.getVec(),

@@ -34,6 +34,10 @@ const el = {
   btnMapLabel: () => document.querySelector('#btn-map span'),
   btnMapIcon: () => document.querySelector('#btn-map .c-icon'),
   mapBar: () => document.getElementById('map-bar'),
+  panel: () => document.getElementById('panel'),
+  collapse: () => document.getElementById('panel-collapse'),
+  tab: () => document.getElementById('panel-tab'),
+  tabCount: () => document.getElementById('panel-tab-count'),
 };
 
 // ---------------------------------------------------------------------------
@@ -147,10 +151,26 @@ export function hasLoadError() {
   return !!state.loadError;
 }
 
-/** 更新右上角"命中 N 条"计数 */
+/**
+ * 更新"命中 N 条"计数。
+ *
+ * 要写**两处**：面板头的计数，和收起标签上的计数。
+ * 后者是面板收着时唯一还能看到结果变化的地方，漏了它用户就完全不知道
+ * 刚才那次搜索有没有搜到东西 —— 面板是关的，什么都没变。
+ *
+ * @param {number} n 命中条数
+ */
 export function setResultCount(n) {
   const c = el.count();
   if (c) c.textContent = String(n);
+
+  const tc = el.tabCount();
+  if (tc) tc.textContent = String(n);
+
+  // 面板收着时条数变了 → 在标签上点一颗红点。
+  // 只对"有结果"点亮：初始化和复位也会调 setResultCount(0)，
+  // 那是把计数清零，不该被当成"搜出了新东西"。
+  if (!panelOpen && n > 0) markTabNew();
 }
 
 /** 高亮结果列表中指定的一条 */
@@ -286,6 +306,114 @@ export function setMapUi(on) {
 }
 
 // ---------------------------------------------------------------------------
+// 面板开合（可收起悬浮窗）
+// ---------------------------------------------------------------------------
+/**
+ * 面板是否展开。
+ *
+ * 初始是**收起**的：开屏时 3D 应该是完整画面，而不是先被一张空列表占掉一角。
+ * 用户第一次搜索时它才弹出来 —— 那一刻列表里才有东西，弹出才有意义。
+ *
+ * ⚠️ 这个初值必须和 index.html 上的 `data-open="false"` 一致：
+ * 首屏那一帧 CSS 按 HTML 上的属性渲染，如果 JS 起来后内部状态是"开"，
+ * 会先闪出一张列表、再被收回去。
+ */
+let panelOpen = false;
+
+/**
+ * 用户是否**主动收起**过面板。
+ *
+ * 这一个布尔值决定了"收起之后还弹不弹"：
+ *   false —— 还没手动收过，搜索时自动弹出（首次搜索的默认行为）
+ *   true  —— 用户明确表示"我不想看它"，之后搜索只更新标签上的条数，
+ *            绝不再把面板撞开。这正是用户提的要求："我也可以选择性去收起这个列表"。
+ *
+ * 为什么不靠 `panelOpen` 一个变量兼任：面板关着有两种原因 ——
+ * "还没搜过"和"用户自己收的"，对下一次搜索的反应完全不同，
+ * 用一个变量分不出来。
+ */
+let userCollapsed = false;
+
+/** 面板开合后的通知回调（由 main.js 注册为"重算画布尺寸"） */
+let onPanelToggleHook = null;
+
+export function setPanelToggleHook(fn) { onPanelToggleHook = fn; }
+
+/** 面板当前是否展开 */
+export function isPanelOpen() {
+  return panelOpen;
+}
+
+/** 用户是否主动收起过面板 */
+export function isPanelCollapsedByUser() {
+  return userCollapsed;
+}
+
+/** 把内部状态写到 DOM（真正的显隐由 styles.css 消费 data-open） */
+function applyPanelOpen() {
+  const p = el.panel();
+  if (p) p.dataset.open = panelOpen ? 'true' : 'false';
+  // body 上也记一份：右下角的浮层控件（视图按钮 / 提示条 / 面包屑）要
+  // 靠它判断"该不该给面板让路"。这些元素和 .panel 分属不同父节点，
+  // 用兄弟选择器够不到，只能靠 body 上的状态。
+  if (typeof document !== 'undefined') {
+    document.body.dataset.panelOpen = panelOpen ? 'true' : 'false';
+  }
+  if (onPanelToggleHook) onPanelToggleHook(panelOpen);
+}
+
+/** 点亮标签上的红点（"收起期间有新结果"） */
+function markTabNew() {
+  el.tab()?.classList.add('is-new');
+}
+
+/** 熄灭标签上的红点 */
+function clearTabNew() {
+  el.tab()?.classList.remove('is-new');
+}
+
+/** 展开面板 */
+export function openPanel() {
+  clearTabNew();
+  if (panelOpen) return;
+  panelOpen = true;
+  // 手动展开意味着"我愿意看它了"，于是恢复"搜索时自动弹出"的行为
+  userCollapsed = false;
+  applyPanelOpen();
+}
+
+/**
+ * 收起面板。
+ * @param {{byUser?: boolean}} [opts] byUser=false 用于复位等程序内部收起
+ */
+export function closePanel({ byUser = true } = {}) {
+  if (byUser) userCollapsed = true;
+  if (!panelOpen) return;
+  panelOpen = false;
+  applyPanelOpen();
+}
+
+/** 切换开合 */
+export function togglePanel() {
+  if (panelOpen) closePanel();
+  else openPanel();
+}
+
+/**
+ * 复位到初始态：面板收起，但**不**记住"用户收起过"。
+ *
+ * 复位是"回到初始全景"的意思，初始状态就是面板收着、且下次搜索还会自动弹。
+ * 若在这里保留 userCollapsed，用户点一次"全景"之后就再也等不到自动弹出，
+ * 而屏幕上没有任何东西提示这是刚才那次复位造成的。
+ */
+export function resetPanelState() {
+  panelOpen = false;
+  userCollapsed = false;
+  clearTabNew();
+  applyPanelOpen();
+}
+
+// ---------------------------------------------------------------------------
 // 结果面板抽屉（竖屏手机上可上下拖动）
 // ---------------------------------------------------------------------------
 /**
@@ -306,7 +434,8 @@ const DRAWER_RATIOS = { peek: 0.27, half: 0.5, full: 0.82 };
 
 /** 当前抽屉档位（'peek' | 'half' | 'full'） */
 let drawerLevel = 'peek';
-let drawerBound = false;
+/** 面板的交互是否已经绑定过（只绑一次） */
+let panelBound = false;
 
 /** 当前是否处于"该启用抽屉"的屏幕（竖屏且偏窄）——横屏是右侧栏，不需要抽屉 */
 function drawerApplies() {
@@ -347,10 +476,18 @@ export function getDrawerLevel() {
 }
 
 /**
- * 定位到某条物资后，按需把抽屉推到"半开"。
+ * 让结果"看得见"：面板收着就弹出来，竖屏下多条结果再顺手把抽屉推到半开。
  *
- * ⚠️ 这里有个反直觉的判断，是实测踩出来的：
- * **只有"结果不止一条、用户需要挑"时才把面板推高。**
+ * 两个职责合在一个函数里，是因为它们回答的是同一个问题 ——
+ * "搜完之后，用户该看到多少列表"。拆开就会出现"弹了面板但没升档"
+ * 或者"升了档但面板还关着"的半截状态。
+ *
+ * 唯一的例外：**用户主动收起过面板**（userCollapsed）就什么都不做。
+ * 那时搜索只在标签上更新条数、点一颗红点（在 setResultCount 里），
+ * 绝不撞开面板 —— 这是用户明确要的行为。
+ *
+ * ⚠️ 下面有个反直觉的判断，是实测踩出来的：
+ * **只有"结果不止一条、用户需要挑"时才把抽屉推高。**
  *
  * 原因：定位的主任务是"看清这个箱子在哪"，3D 才是主角。
  * 单条命中是搜索自动定位（没什么可挑的，面包屑 + 详情卡已经说明白是哪一条），
@@ -364,6 +501,12 @@ export function getDrawerLevel() {
  * half 能看见两三条足够挑，想看全部用户自己再往上拖。
  */
 export function revealResults() {
+  // 用户主动收起过 → 不撞开面板。条数和红点由 setResultCount 负责。
+  if (userCollapsed) return;
+
+  openPanel();
+
+  // 竖屏才有"档位"这回事；桌面/横屏的面板是全高悬浮窗，不需要升档
   if (!drawerApplies()) return;
   // 只数真实卡片，骨架块 / 提示块不算
   const cards = document.querySelectorAll('#results .result-item.is-card').length;
@@ -372,19 +515,29 @@ export function revealResults() {
 }
 
 /**
- * 绑定抽屉拖拽。只做一次（重复调用会被忽略）。
+ * 绑定面板的全部交互：开合（收起按钮 / 常驻标签）+ 竖屏抽屉拖拽。
+ * 只做一次（重复调用会被忽略）。
  *
- * 交互设计（对齐手机上的系统级底部抽屉）：
+ * 抽屉的交互设计（对齐手机上的系统级底部抽屉）：
  *   - 按住把手上下拖动 → 跟手改变高度
  *   - 松手 → 吸附到最近的一档（不是停在半路，避免留在一个别扭的高度）
  *   - 快速上滑 / 下滑 → 直接到相邻档（轻扫即换档，不用精确拖到位置）
  */
-export function initPanelDrawer() {
-  if (drawerBound || typeof document === 'undefined') return;
+export function initPanel() {
+  if (panelBound || typeof document === 'undefined') return;
   const grip = document.getElementById('panel-grip');
   const panel = document.getElementById('panel');
   if (!grip || !panel) return;
-  drawerBound = true;
+  panelBound = true;
+
+  // ---- 开合：收起按钮 + 常驻标签 ----
+  // 两个入口都只改状态，显隐一律交给 CSS 消费 data-open。
+  // 这样"面板长什么样"只有 styles.css 一个地方说了算，改版不用翻 JS。
+  el.collapse()?.addEventListener('click', () => closePanel());
+  el.tab()?.addEventListener('click', () => openPanel());
+  // 把内部状态刷到 DOM 上一次。初值和 HTML 上的 data-open 一致，
+  // 这一步是为了让"没有这个属性"的情况（例如老版本 HTML 缓存）也能对齐。
+  applyPanelOpen();
 
   let dragging = false;
   let startY = 0;

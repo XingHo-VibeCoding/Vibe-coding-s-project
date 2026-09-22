@@ -93,16 +93,101 @@ async function rotateBy(pointerType, px) {
  *   改成轮询到"连续两次读数一致"，与机器快慢无关。
  * @returns {Promise<number[]>} 落位后的 target
  */
-async function settleView(page, { timeout = 8000 } = {}) {
+async function settleView(page, { timeout = 10000 } = {}) {
   const t0 = Date.now();
-  let prev = await page.evaluate(() => window.__diag.target());
+  let prev = null;
   while (Date.now() - t0 < timeout) {
+    const snap = await page.evaluate(async () => {
+      const cam = await import('./src/camera.js');
+      return { target: window.__diag.target(), animating: cam.isAnimating() };
+    });
+    // 两个条件**同时**满足才算落位：
+    //   ① 飞行动画真的停了 —— isAnimating() 是权威判据，不用猜；
+    //   ② 连续两次读数一致 —— 兜住"动画停了但还有别的力量在推"（比如摇杆）。
+    //
+    // 为什么只靠 ② 不够：本环境帧率能低到 1~2fps，相邻两次采样很可能落在
+    // **同一帧**上，读数当然一致 —— 于是把"动画中途"误判成"已经停住"。
+    // 实测就是这么栽的：复位动画还在飞，这里提前返回，读到起点
+    // [-7.83, 3.14, 5.46]（终点是 [0, 3, 5]），后面三条摇杆断言跟着全错。
+    if (!snap.animating && prev
+        && snap.target.every((v, i) => Math.abs(v - prev[i]) < 1e-6)) {
+      return snap.target;
+    }
+    prev = snap.target;
     await page.waitForTimeout(150);
-    const cur = await page.evaluate(() => window.__diag.target());
-    if (cur.every((v, i) => Math.abs(v - prev[i]) < 1e-6)) return cur;
-    prev = cur;
   }
-  return prev;   // 超时也返回，让断言自己去报错，不要在这里静默通过
+  return prev ?? [0, 0, 0];   // 超时也返回，让断言自己去报错，不要在这里静默通过
+}
+
+/**
+ * 等结果面板的滑入 / 滑出动画**真的走完**，再读状态。
+ *
+ * 为什么不能再用固定 sleep —— 和 settleView 是同一类坑，这次栽在 CSS 过渡上：
+ * 面板的显隐是 `transform .24s / opacity .18s`，名义时长很短，
+ * 但过渡是靠**渲染帧**推进的，而本环境里 WebGL 渲染循环把帧率压到个位数，
+ * 于是它要跑近 2 秒才到位。实测（桌面端点收起按钮）：
+ *   点击后  500ms：opacity=1、transform 无位移、left=928（纹丝不动）
+ *   点击后 2000ms：opacity=0、位移 364px、left=1292（终于滑出去了）
+ * 固定等 500ms 读到的就是"还没开始动"的中间态，断言必然假失败。
+ *
+ * 判据有两条，必须**同时**满足：
+ *   ① `visible` 与期望一致（= 不透明且没滑出屏幕，正是"看不看得见"的定义）；
+ *   ② 面板盒子**连续两次读数一致**（高度 + 左沿），说明过渡真的停了。
+ * 只看 ① 不够：竖屏抽屉的显隐是 display 切换（瞬间生效），
+ * 但它紧跟着还有一段高度过渡 —— 这时 ① 已经满足、高度却还在爬，
+ * 量到的是个半路的值。这和 settleView 的"连续两次一致"是同一个思路。
+ *
+ * @param {import('playwright').Page} page
+ * @param {boolean} wantOpen 期望的最终状态：true=展开可见，false=收起不可见
+ * @returns {Promise<object>} 面板状态快照（超时也返回，让断言自己去报错）
+ */
+async function settlePanel(page, wantOpen, { timeout = 8000 } = {}) {
+  const t0 = Date.now();
+  let last = null;
+  let prevBox = null;
+  while (Date.now() - t0 < timeout) {
+    const snap = await page.evaluate(() => {
+      const r = document.getElementById('panel').getBoundingClientRect();
+      return {
+        diag: window.__diag.panel(),
+        box: { h: Math.round(r.height), l: Math.round(r.left) },
+      };
+    });
+    last = snap.diag;
+    const stateOk = last.open === wantOpen && last.visible === wantOpen;
+    const boxOk = !!prevBox && prevBox.h === snap.box.h && prevBox.l === snap.box.l;
+    if (stateOk && boxOk) return last;
+    prevBox = snap.box;
+    await page.waitForTimeout(150);
+  }
+  return last;
+}
+
+/**
+ * 推着摇杆不放，轮询到注视点**真的走够了距离**。
+ *
+ * 为什么不用"固定等待 + 断言位移"：
+ * 摇杆每帧按 dt 推 target，而 dt 被封顶 50ms（见 main.js 的 frame），
+ * 所以位移正比于**跑过的帧数**，不是墙上时间。
+ * 本环境的帧率还会随画布尺寸浮动 —— 竖屏面板收起后画布变高约三成，
+ * 帧率跟着掉，同样推 1200ms 的位移实测从 3.17 掉到 1.98，断言直接假失败。
+ * 轮询到"走够距离"与机器快慢无关，而它验的仍然是"摇杆真的在推、不是只转视角"。
+ *
+ * @param {import('playwright').Page} page
+ * @param {number[]} from 起点（水平面上取 X/Z 算距离）
+ * @param {number} minDist 期望走出的最小水平距离
+ * @returns {Promise<number>} 实际走出的水平位移
+ */
+async function waitForTravel(page, from, minDist, { timeout = 8000 } = {}) {
+  const t0 = Date.now();
+  let last = 0;
+  while (Date.now() - t0 < timeout) {
+    const t = await page.evaluate(() => window.__diag.target());
+    last = Math.hypot(t[0] - from[0], t[2] - from[2]);
+    if (last >= minDist) return last;
+    await page.waitForTimeout(100);
+  }
+  return last;
 }
 
 const DRAG_PX = 100;
@@ -640,6 +725,19 @@ check('M 键进入地图、Esc 退出', mOn === true && mOff === false, `M=${mOn
 await mob.evaluate(() => window.__api.reset());
 await mob.waitForTimeout(1300);
 
+// ⚠️ 先展开面板再测抽屉。
+// 面板现在**默认是收起的**（开屏要把画面给 3D），收起态在竖屏下是 display:none ——
+// 直接量的话高度恒为 0、把手不可聚焦，五条断言会全部假失败。
+// 这一组验的是"展开之后抽屉长什么样"，所以先把它打开。
+const collapsedAfterReset = await settlePanel(mob, false);
+check('复位后面板回到收起态（初始状态就是收着的）',
+  collapsedAfterReset.open === false && collapsedAfterReset.visible === false
+  && collapsedAfterReset.tabVisible === true,
+  `open=${collapsedAfterReset.open} visible=${collapsedAfterReset.visible} 标签=${collapsedAfterReset.tabVisible}`);
+
+await mob.evaluate(() => window.__api.openPanel());
+await settlePanel(mob, true);
+
 const dw0 = await mob.evaluate(() => window.__diag.drawer());
 const peekH = Math.round(844 * 0.27);
 check('复位后抽屉回到 peek 档（「全景」要把 3D 视野也让回来）',
@@ -650,7 +748,7 @@ check('复位后抽屉回到 peek 档（「全景」要把 3D 视野也让回来
 const dwHeights = {};
 for (const [lv, ratio] of [['half', 0.5], ['full', 0.82], ['peek', 0.27]]) {
   await mob.evaluate((l) => window.__api.setDrawer(l), lv);
-  await mob.waitForTimeout(400);            // 等过渡走完
+  await settlePanel(mob, true);             // 等高度过渡真的走完（固定 sleep 不够，见 settlePanel）
   const d = await mob.evaluate(() => window.__diag.drawer());
   dwHeights[lv] = { got: d.height, want: Math.round(844 * ratio), attr: d.attr, varH: d.varH };
 }
@@ -771,6 +869,7 @@ check('把手可聚焦 + 方向键换档（键盘/读屏可用）',
 await mob.evaluate(() => { window.__api.setDrawer('peek'); });
 await mob.evaluate(() => window.__api.search('FZ-SP-00001'));   // 单条命中
 await mob.waitForTimeout(1600);
+await settlePanel(mob, true);        // 等抽屉高度过渡走完再量（固定 sleep 会读到半路的值）
 const single = await mob.evaluate(() => ({
   drawer: window.__diag.drawer(),
   stageH: Math.round(document.querySelector('.stage').getBoundingClientRect().height),
@@ -807,6 +906,7 @@ await mob.evaluate(() => {
   card?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
 });
 await mob.waitForTimeout(1500);
+await settlePanel(mob, true);        // 同上：等升档的过渡真的走完
 const picked = await mob.evaluate(() => ({
   drawer: window.__diag.drawer(),
   mapMode: window.__diag.mapMode(),
@@ -819,6 +919,7 @@ check('从多条候选里挑一条后，抽屉升到 half（选中的那条看�
 // 地图模式下抽屉被硬压到 168px：进地图时列表本来就该让位
 await mob.evaluate(() => window.__api.enterMap());
 await mob.waitForTimeout(700);
+await settlePanel(mob, true);        // 进地图会把面板压到 168px，同样要等它落位
 const mapDrawer = await mob.evaluate(() => window.__diag.drawer());
 check('地图模式下面板压到 168px 且把手收起（拖了也没意义）',
   Math.abs(mapDrawer.height - 168) <= 12 && mapDrawer.gripVisible === false,
@@ -880,13 +981,11 @@ check('摇杆测试起点：镜头已复位到场景中心 (0,3,5)',
   `target=[${t0}]`);
 
 await mob.evaluate(() => window.__api.setJoystick(0, -1));   // 推到最上 = 前进
-// 推 1200ms 而不是 900ms：摇杆循环里 dt 同样封顶 50ms，
-// 8fps 下 900ms 只能推进约 0.35s 的"模拟时间"（实测位移 3.17），
-// 离阈值 2 太近，机器再慢一点就会假失败。给足余量。
-await mob.waitForTimeout(1200);
+// 用"轮询到走够 2 个单位"代替"固定等 1200ms 再看位移"：
+// 位移正比于帧数，而帧率会随画布尺寸浮动，固定等待是个会随环境变化的量。
+const fwd = await waitForTravel(mob, t0, 2);
 await mob.evaluate(() => window.__api.resetJoystick());
 const t1 = await mob.evaluate(() => window.__diag.target());
-const fwd = Math.hypot(t1[0] - t0[0], t1[2] - t0[2]);
 check('推摇杆向上 = 注视点真的往前走了（不是只转视角）',
   fwd > 2,
   `target [${t0}] → [${t1}]，水平位移 ${fwd.toFixed(2)}`);
@@ -896,10 +995,9 @@ check('前进只动 XZ、**不动 Y**（摇杆是"走"不是"飞"）',
 
 // ---- 左右推 = 平移（不是原地转圈：转圈改的是 theta，平移改的是 target） ----
 await mob.evaluate(() => window.__api.setJoystick(1, 0));    // 推到最右
-await mob.waitForTimeout(1000);
+const side = await waitForTravel(mob, t1, 1.5);
 await mob.evaluate(() => window.__api.resetJoystick());
 const t2 = await mob.evaluate(() => window.__diag.target());
-const side = Math.hypot(t2[0] - t1[0], t2[2] - t1[2]);
 check('推摇杆向右 = 侧向平移（不是原地转圈）',
   side > 1.5, `水平位移 ${side.toFixed(2)}`);
 
@@ -959,6 +1057,14 @@ await desk.waitForFunction(() => window.__diag && window.__diag.ready === true, 
 const dOverview = await desk.evaluate(() => window.__diag.mapRadius());
 check('宽屏全景距离保持基准 52', Math.abs(dOverview - 52) < 2, `radius=${dOverview.toFixed(1)}`);
 
+// ---- 初始态：面板收着，只留一个标签 ----
+// 用户要的是"刚开始初始化暂时没有这个列表"，所以开屏必须是收起态。
+const dInit = await desk.evaluate(() => window.__diag.panel());
+check('桌面端初始态：面板收起、只露一个标签（开屏把画面让给 3D）',
+  dInit.open === false && dInit.visible === false
+  && dInit.tabVisible === true && dInit.tabCount === '0',
+  `open=${dInit.open} 可见=${dInit.visible} 标签=${dInit.tabVisible} 条数=${dInit.tabCount}`);
+
 await desk.fill('#search', 'FZ-SP-00001');
 await desk.press('#search', 'Enter');
 await desk.waitForTimeout(1300);
@@ -969,6 +1075,40 @@ const dState = await desk.evaluate(() => ({
 }));
 check('桌面端搜索定位仍正常', dState.hi && dState.hi.outline === 1, JSON.stringify(dState.hi));
 check('桌面端详情卡也默认收起', dState.selVisible && dState.selCollapsed);
+
+// 等面板滑入到位再验"看得见"—— 过渡受帧率拖累，固定 sleep 读到的还是半路的值
+const dPanelOpen = await settlePanel(desk, true);
+check('桌面端第一次搜索后：面板自动弹出（"第一次搜索列表才出现"）',
+  dPanelOpen.open === true && dPanelOpen.visible === true
+  && dPanelOpen.collapsedByUser === false,
+  `open=${dPanelOpen.open} 可见=${dPanelOpen.visible} 用户收过=${dPanelOpen.collapsedByUser}`);
+
+// ---- 面板浮起来之后，右下角的浮层必须让开它 ----
+// 这条是**真实缺陷的回归锁**，不是锦上添花。
+// 面板改成浮层后 .stage 变整宽，而视图按钮是相对 .stage 的 `right: 12px`，
+// 于是它从 x≈774 一路滑到 x≈1114，正好钻进面板底下（面板 928~1268，
+// z-index 20 压过按钮的 12）。症状是"按钮还看得见半边、点下去毫无反应" ——
+// 命中的其实是面板。这类"看得见却点不着"最难查，所以用双保险判据：
+//   几何 —— 按钮右沿必须落在面板左沿之外；
+//   命中 —— 按钮中心点 elementFromPoint 拿到的必须还是按钮自己。
+const dGeom = await desk.evaluate(() => {
+  const box = (s) => {
+    const r = document.querySelector(s).getBoundingClientRect();
+    return { l: Math.round(r.left), r: Math.round(r.right) };
+  };
+  const btn = document.getElementById('btn-map');
+  const br = btn.getBoundingClientRect();
+  const hit = document.elementFromPoint(
+    Math.round(br.left + br.width / 2), Math.round(br.top + br.height / 2));
+  return {
+    panel: box('.panel'), controls: box('.controls'),
+    btnHitSelf: hit === btn || btn.contains(hit),
+    hitDesc: hit ? `${hit.tagName}.${hit.className}` : null,
+  };
+});
+check('桌面端：视图按钮给悬浮面板让路（不被盖住、点得着）',
+  dGeom.controls.r <= dGeom.panel.l && dGeom.btnHitSelf,
+  `按钮 ${dGeom.controls.l}~${dGeom.controls.r}，面板左沿=${dGeom.panel.l}，按钮中心命中=${dGeom.hitDesc}`);
 
 // 桌面端点"地图"按钮
 await tapAt(desk, '#btn-map');
@@ -985,6 +1125,30 @@ check('桌面端地图视野可见半宽足够装下 A~C',
 await tapAt(desk, '#btn-map');
 await desk.waitForTimeout(900);
 check('再点一次退出地图', (await desk.evaluate(() => window.__diag.mapMode())) === false);
+
+// ---- 收起 / 再展开 ----
+await tapAt(desk, '#panel-collapse');
+const dCollapsed = await settlePanel(desk, false);
+check('桌面端点收起按钮：面板滑出屏幕、标签接手',
+  dCollapsed.open === false && dCollapsed.visible === false && dCollapsed.tabVisible === true,
+  `open=${dCollapsed.open} 可见=${dCollapsed.visible} 标签=${dCollapsed.tabVisible}`);
+
+// 面板不在了，按钮就该回原位 —— 让路是为了避开遮挡，不是常驻的偏移
+const dGeom2 = await desk.evaluate(() => {
+  const r = document.querySelector('.controls').getBoundingClientRect();
+  return { fromRight: Math.round(window.innerWidth - r.right) };
+});
+check('桌面端：面板收起后视图按钮回到原位（不做无谓的让路）',
+  dGeom2.fromRight <= 20, `按钮距右沿 ${dGeom2.fromRight}px`);
+
+// 收起状态下换个关键词再搜（1 条 → 2 条）→ 面板必须保持收起，只在标签上更新
+await desk.evaluate(() => window.__api.search('杯子'));
+await desk.waitForTimeout(1200);
+const dTab = await desk.evaluate(() => window.__diag.panel());
+check('桌面端手动收起后再搜索：面板不自动弹开，只在标签上更新条数',
+  dTab.open === false && dTab.visible === false
+  && dTab.tabCount === '2' && dTab.tabNew === true,
+  `open=${dTab.open} 标签条数=${dTab.tabCount} 红点=${dTab.tabNew}`);
 
 check('桌面端全程无报错', dErr.length === 0, dErr.slice(0, 3).join(' | '));
 
@@ -1219,6 +1383,11 @@ for (const size of LAND_SIZES) {
   // 页面没起来就跳过这一组断言（上面已经报过 FAIL 了），
   // 免得在空页面上 evaluate 一堆 null 又炸一遍，掩盖真正的原因。
   if (landReady) {
+    // 横屏下面板默认也是收起的（开屏把画面让给 3D）。
+    // 本组验的是"展开之后长什么样"，所以先打开；收起态另有一组断言在末尾。
+    await land.evaluate(() => window.__api.openPanel());
+    await settlePanel(land, true);
+
     // 统一的量尺：把"关键区域的盒子"一次量全，后面复用
     const measure = () => land.evaluate(() => {
       const box = (el) => {
@@ -1266,15 +1435,22 @@ for (const size of LAND_SIZES) {
     check(`[${tag}] 顶栏横跨整个宽度（不能只占左半边，否则看着像被劈成两块）`,
       Math.abs(L0.topbar.w - L0.innerW) <= 2,
       `顶栏宽=${L0.topbar.w}，视口宽=${L0.innerW}`);
-    // 列表在右、3D 在左：与**桌面端**保持一致（桌面基础层就是 1fr 340px），
-    // 同一产品不因为换设备就把列表翻到另一侧。
-    // 判据：面板左沿必须落在右半边，且正好接在 3D 舞台的右沿上。
-    check(`[${tag}] 结果列表在右、3D 在左（与桌面端一致）`,
-      L0.panel.l >= L0.innerW * 0.5 && Math.abs(L0.panel.l - L0.stage.w) <= 2,
-      `3D 宽=${L0.stage.w}，面板 left=${L0.panel.l}（宽${L0.panel.w}），视口宽=${L0.innerW}`);
-    check(`[${tag}] 面板占满整列高度（顶栏下沿→屏幕底，不留白）`,
-      Math.abs(L0.panel.t - L0.topbar.b) <= 2
-      && Math.abs(L0.panel.b - L0.innerH) <= 2
+    // ---- 形态从"占一列的侧栏"变成"浮在 3D 上的卡片" ----
+    // 这是本轮改动的核心，两条断言分别守它的两个面：
+    //   ① 3D 必须铺满整宽（否则"收起来就是完整画面"这句承诺不成立）；
+    //   ② 面板必须浮在右半边、且完整落在屏幕内（滑出去/压到边缘都是 bug）。
+    check(`[${tag}] 3D 舞台铺满整个宽度（悬浮窗不再占一列）`,
+      Math.abs(L0.stage.w - L0.innerW) <= 2,
+      `3D 宽=${L0.stage.w}，视口宽=${L0.innerW}`);
+    check(`[${tag}] 结果面板浮在右半边、完整落在屏幕内（与桌面端一致）`,
+      L0.panel.l >= L0.innerW * 0.5 && L0.panel.l + L0.panel.w <= L0.innerW + 1,
+      `面板 ${L0.panel.l}~${L0.panel.l + L0.panel.w}（宽${L0.panel.w}），视口宽=${L0.innerW}`);
+    // 面板从顶栏下沿附近一直铺到屏幕底部附近，中间不留白。
+    // 上沿允许有 --panel-gap（8px）的间距，下沿同理 —— 这是"浮层"该有的边距，
+    // 不是"没占满"（旧版断言要求严丝合缝贴住顶栏和屏幕底，那是占列形态的特征）。
+    check(`[${tag}] 面板从顶栏下沿铺到屏幕底部（中间不留白）`,
+      L0.panel.t >= L0.topbar.b - 1 && L0.panel.t <= L0.topbar.b + 20
+      && L0.panel.b >= L0.innerH - 20
       && L0.panel.h >= L0.innerH * 0.75,
       `面板 ${L0.panel.t}~${L0.panel.b} h${L0.panel.h}，顶栏下沿=${L0.topbar.b}，视口高=${L0.innerH}`);
     // 收窄后的下限是 clamp 的 184px（用户要求"侧栏窄一点，把地方让给 3D"）。
@@ -1331,6 +1507,40 @@ for (const size of LAND_SIZES) {
       `attr=${L2.drawerAttr} 列表高=${L2.results.h}`);
 
     await land.screenshot({ path: `verify/shots/shot-landscape-${size.w}.png` });
+
+    // ---- 收起态：面板滑出屏幕、标签接手、再搜索不撞开面板 ----
+    // 这一段守的是本轮改动的另一半承诺："选择性收起"之后，
+    // 面板不该被下一次搜索撞开 —— 用户明确关掉的东西，程序不能自作主张打开。
+    await land.evaluate(() => window.__api.closePanel());
+    const tab0 = await settlePanel(land, false);
+    const L3 = await measure();
+    check(`[${tag}] 收起后面板滑出屏幕、3D 完全不受遮挡`,
+      L3.panel.l >= L3.innerW,
+      `面板 left=${L3.panel.l}，视口宽=${L3.innerW}`);
+    check(`[${tag}] 收起后常驻标签出现，并带上当前条数`,
+      tab0.tabVisible === true && tab0.tabCount === '2',
+      `标签可见=${tab0.tabVisible} 条数=${tab0.tabCount}`);
+
+    // 收起状态下换一个关键词再搜（2 条 → 1 条）：
+    // 面板必须**保持收起**，只在标签上更新数字并点亮红点。
+    await land.evaluate(() => window.__api.search('FZ-SP-00001'));
+    await land.waitForTimeout(1700);
+    const tab1 = await land.evaluate(() => window.__diag.panel());
+    check(`[${tag}] 手动收起后再搜索：面板不自动弹开，只在标签上更新条数`,
+      tab1.open === false && tab1.visible === false
+      && tab1.tabVisible === true && tab1.tabCount === '1' && tab1.tabNew === true,
+      `open=${tab1.open} 可见=${tab1.visible} 标签条数=${tab1.tabCount} 红点=${tab1.tabNew}`);
+
+    // 点标签能再展开 —— 否则用户就没有任何入口把它叫回来了
+    await land.evaluate(() => document.getElementById('panel-tab').click());
+    const tab2 = await settlePanel(land, true);
+    check(`[${tag}] 点标签能重新展开面板，且红点熄灭`,
+      tab2.open === true && tab2.visible === true && tab2.tabNew === false,
+      `open=${tab2.open} 可见=${tab2.visible} 红点=${tab2.tabNew}`);
+
+    // 收尾：收回初始态，免得影响下一档尺寸
+    await land.evaluate(() => window.__api.reset());
+    await land.waitForTimeout(600);
   }
   check(`[${tag}] 横屏全程无报错`, lErr.length === 0, lErr.slice(0, 3).join(' | '));
   await land.close();
