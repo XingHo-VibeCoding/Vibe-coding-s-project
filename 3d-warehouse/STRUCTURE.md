@@ -212,3 +212,4 @@
 | `../TECH_DESIGN.md` | 技术路线来源（方案 X：3D 经后端取数） |
 | `backend/README.md` | 后端接口、凭据配置、数据缺口说明 |
 | `verify/*.mjs` | 自动化验收脚本（改完代码跑一遍，确认没改坏）；截图输出到 `verify/shots/`，该目录已 gitignore |
+| `verify/deploy-smoke.sh` | 发布前对 `_deploy_3d/` **副本本身**再跑一遍验收（详见 `../RUN.md` 第 9 节）。为什么需要：上线的是派生副本，源码目录全绿不代表副本没问题 |

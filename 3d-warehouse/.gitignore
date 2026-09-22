@@ -18,3 +18,11 @@ data/real-*.json
 verify/shots/
 !shot-mainview-with-url.png
 !shot-marker-none.png
+
+# ============ 发布冒烟测试的临时产物 ============
+# verify/deploy-smoke.sh 每次现从 verify-mobile-ux.mjs 派生一份指向 8020 的副本，
+# 跑完会自己删掉（trap EXIT）。这里兜个底：万一中途被 Ctrl-C / 杀掉进程，
+# 残留文件也不会进仓库。
+_smoke_mobile.mjs
+_smoke_shots/
+_smoke.log

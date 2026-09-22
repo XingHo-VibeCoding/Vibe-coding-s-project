@@ -157,7 +157,7 @@ https://e887bac984dd46d8a6df125eacdce7d8.sg.agentos-app.run
 │   └── api.js              # 对外测试接口（window.__diag / __api）
 ├── verify/                 # 自动化验收脚本 + 截图（非运行时依赖）
 │   ├── verify-refactor.mjs  # 重构验收：22 项端到端断言
-│   ├── verify-mobile-ux.mjs # 手机体验验收：66 项断言（手感/详情卡/地图/自适应/四态/标记环）
+│   ├── verify-mobile-ux.mjs # 手机体验验收：110 项断言（手感/详情卡/地图/自适应/四态/标记环/抽屉/横屏三档）
 │   ├── verify-api.mjs       # 方案乙验收：7 项断言（含降级路径）※需先切 api 模式
 │   └── shots/               # 跑脚本自动生成的截图（已 gitignore，不进仓库）
 │       └── shot-*.png       #   桌面 / 手机 / 地图 / 走后端
@@ -608,10 +608,10 @@ python backend/server.py             # seed 模式，端口 8011，无需任何�
 | 脚本 | 覆盖 | 断言数 |
 | --- | --- | --- |
 | `verify-refactor.mjs` | 重构后功能无变化（启动/搜索/高亮/复位/鼠标/手机适配） | 22 |
-| `verify-mobile-ux.mjs` | Day 8 改动（触摸手感/详情卡收起/全屏地图/全景自适应/无限拖拽/页面锁死/结果面板四态/标记环三态/进地图看全貌/**结果面板抽屉**/**手机横屏三档尺寸**）+ 动画抢断回归 | 107 |
+| `verify-mobile-ux.mjs` | Day 8 改动（触摸手感/详情卡收起/全屏地图/全景自适应/无限拖拽/页面锁死/结果面板四态/标记环三态/进地图看全貌/**结果面板抽屉**/**手机横屏三档尺寸**/**结果列表在左**）+ 动画抢断回归 | 110 |
 | `verify-api.mjs` | 方案乙：前端确实从后端取数 + 后端挂了能降级 | 7 |
 
-> 手机端那套（107 条）覆盖**五种屏幕形态**，因为它们走的是不同的 CSS 分支：
+> 手机端那套（110 条）覆盖**五种屏幕形态**，因为它们走的是不同的 CSS 分支：
 > 竖屏 390×844（底部抽屉）、横屏 844×390 / **740×360** / **600×360**
 > （左侧栏，后两个专门覆盖媒体查询重叠区间）、桌面 1280×800（固定右侧栏）。
 > 改布局时这几边都要看 —— 只测一种宽度的话，重叠区的 bug 抓不到（见 8.1 第 7 条）。
@@ -778,19 +778,38 @@ node verify/verify-api.mjs
 
 ```bash
 # 1. 在仓库根目录，重新生成发布副本（排除 backend/verify，它们不该公开）
-rm -rf _deploy_3d && mkdir -p _deploy_3d
-cp -r 3d-warehouse/index.html 3d-warehouse/styles.css \
-      3d-warehouse/src 3d-warehouse/vendor 3d-warehouse/data \
-      3d-warehouse/package.json _deploy_3d/
+#    只删要替换的项再覆盖，比 rm -rf 整个目录安全，范围明确
+for d in src vendor data; do rm -rf _deploy_3d/$d && cp -r 3d-warehouse/$d _deploy_3d/$d; done
+for f in index.html styles.css package.json; do cp 3d-warehouse/$f _deploy_3d/$f; done
 
-# 2. 让 AI 重新发布 _deploy_3d 目录（会复用同一链接，内容被替换）
+# 2. 【必做】对副本本身跑一遍冒烟测试（不是对源码目录）
+cd 3d-warehouse && bash verify/deploy-smoke.sh
+
+# 3. 跑绿了，再让 AI 发布 _deploy_3d 目录（会复用同一链接，内容被替换）
 #    —— 直接跟 AI 说"把 3d-warehouse 重新发布到线上"即可
 
-# 3. 想下线时：跟 AI 说"把线上演示下线"
+# 4. 想下线时：跟 AI 说"把线上演示下线"
 ```
 
 > `_deploy_3d/` 已在 `.gitignore` 中（`_deploy_*/`），不会进仓库。
 > **注意**：重新发布会**覆盖**同一个链接的内容，而该链接可能已分享给别人。
+
+### 为什么第 2 步必须对「副本」跑，而不是对源码目录
+
+平时跑验收用的是 `3d-warehouse/` 源码目录，但真正上线的是 `_deploy_3d/` 这个派生副本，
+两者只靠一次 `cp` 同步。**漏拷一个文件、或改完源码忘了同步，会出现"源码目录全绿、
+线上却是坏的"**——而且这种错最难发现，因为所有本地验证都通过。
+
+`verify/deploy-smoke.sh` 做三件事：
+
+1. 前置检查副本本身：`DATA_SOURCE` 必须是 `'demo'`、目录里不能有 `backend`/`verify`
+2. **每次现从 `verify/verify-mobile-ux.mjs` 派生**一份指向 8020 端口的临时副本再跑
+   —— 不存派生结果，否则验收脚本加了新断言、冒烟测试还停在旧版本，等于白跑
+3. 跑完自动清理临时文件（`trap ... EXIT`，中途出错也会清）
+
+> ⚠️ 脚本里有个坑写死了：**起服务与跑测试必须在同一条命令里**。
+> 沙箱会回收上一条命令留下的后台进程，分两次调用的话第二次 `curl` 拿到 `000`。
+> 同理 `curl` 访问 localhost 要加 `--noproxy '*'`，否则被 `http_proxy` 环境变量拦掉。
 
 ---
 
