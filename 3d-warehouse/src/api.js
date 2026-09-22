@@ -11,7 +11,7 @@ import { search } from './search.js';
 import { resetView, locate } from './emphasis.js';
 import { isMinimapActive } from './minimap.js';
 import { isMapMode, enterMap, exitMap, toggleMap, screenToGround } from './mapview.js';
-import { isSelInfoExpanded, toggleSelInfo, setMapUi, setLoading, setLoadError, clearLoadError } from './panel.js';
+import { isSelInfoExpanded, toggleSelInfo, setMapUi, setLoading, setLoadError, clearLoadError, setDrawerLevel, getDrawerLevel, revealResults } from './panel.js';
 import { defaultRadiusFor, PHI_MIN, PHI_MAX } from './config.js';
 import { haltInertia } from './controls.js';
 
@@ -63,6 +63,27 @@ export function exposeApi() {
     /** 面板里实际渲染出来的物资卡片数（骨架块不算） */
     cardCount: () => document.querySelectorAll('#results .result-item.is-card').length,
     loading: () => state.loading === true,
+    /**
+     * 结果面板抽屉的当前状态。
+     * height 取的是**实际渲染高度**而不是 CSS 变量 ——
+     * 变量只是"想要多高"，真正生效还要过层叠/媒体查询，
+     * 测试要验的是"用户看到多高"，所以读盒子。
+     */
+    drawer: () => {
+      const p = document.getElementById('panel');
+      if (!p) return null;
+      const grip = document.getElementById('panel-grip');
+      const gripShown = grip ? getComputedStyle(grip).display !== 'none' : false;
+      return {
+        level: getDrawerLevel(),
+        attr: p.dataset.drawer ?? null,
+        varH: p.style.getPropertyValue('--drawer-h') || null,
+        height: Math.round(p.getBoundingClientRect().height),
+        gripVisible: gripShown,
+      };
+    },
+    /** 每个档位对应的 CSS 变量值（供测试断言"档位 → 高度"的映射） */
+    drawerRatios: () => ({ peek: 0.27, half: 0.5, full: 0.82 }),
   };
 
   window.__api = {
@@ -85,6 +106,10 @@ export function exposeApi() {
     toggleMap: () => { const r = toggleMap(); setMapUi(isMapMode()); return r; },
     screenToGround: (x, y) => screenToGround(x, y, document.getElementById('canvas-host')),
     toggleSelInfo,
+    // ---- 结果面板抽屉（供自动化测试直接切档，不用模拟拖拽） ----
+    setDrawer: (level) => { setDrawerLevel(level); return getDrawerLevel(); },
+    getDrawer: getDrawerLevel,
+    revealResults,
     toggleLabels: () => document.getElementById('btn-labels')?.click(),
     toggleView: () => document.getElementById('btn-view')?.click(),
     toggleMinimap: () => document.getElementById('btn-minimap')?.click(),

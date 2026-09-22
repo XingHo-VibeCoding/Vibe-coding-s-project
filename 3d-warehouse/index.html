@@ -79,6 +79,12 @@
 
     <!-- 右侧结果面板 -->
     <aside class="panel" id="panel" aria-label="定位结果">
+      <!-- 抽屉把手：竖屏手机上把面板往上拖可展开、往下拖可收起。
+           它只是"抓取区"，真正的拖拽逻辑在 panel.js 的 initPanelDrawer()。
+           放在 panel-head 里是为了不额外占一行高度。 -->
+      <div class="panel-grip" id="panel-grip" role="separator" aria-label="拖动调整结果面板高度" tabindex="0">
+        <span class="grip-bar" aria-hidden="true"></span>
+      </div>
       <div class="panel-head">
         <span class="ph-title"><i data-lucide="list-filter" class="ph-icon"></i>定位结果</span>
         <span id="result-count" class="count">0</span>

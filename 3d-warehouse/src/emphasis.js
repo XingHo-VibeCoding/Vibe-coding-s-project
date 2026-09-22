@@ -17,6 +17,7 @@ import {
   showSelInfo, hideSelInfo, hideBreadcrumb, hideNoHit,
   setBreadcrumb, renderResults, setResultCount, clearInput,
   clearActiveResult, markActiveResult,
+  revealResults, setDrawerLevel,
 } from './panel.js';
 
 /**
@@ -76,6 +77,18 @@ export function locate(item) {
   hideNoHit();
   showSelInfo(item);
   markActiveResult(item.materialId);
+
+  // 顺手把结果面板抽屉推到"半开"，让结果卡能被看见。
+  //
+  // 为什么放在 locate 里、而不是各个调用点：
+  // locate 是**所有定位路径的唯一收口** —— 搜索命中单条时 search.js 直接调它、
+  // 点结果卡时走 renderResults 的 onPick 回调、点地图上的箱子时走 setPickBoxHook，
+  // 三条路径最后都落在这里。
+  // 之前只在 main.js 的 onPick 回调外面包了一层，结果**搜索自动定位那条路漏了**
+  // （search.js 里是 `locate(hits[0])` 直接调用），表现为"搜出来高亮了，
+  // 但结果卡还藏在收起的面板里"（自动化实测：level 停在 peek）。
+  // 收口到这里，以后再加新的定位入口也不会漏。
+  revealResults();
 }
 
 /** 复位：清除高亮、镜头飞回默认全景、清空搜索与侧栏 */
@@ -107,6 +120,12 @@ export function resetView() {
   clearInput();
   renderResults([], locate);
   setResultCount(0);
+
+  // 抽屉也一并收回 peek：复位是"回到初始全景"的意思，
+  // 初始状态就是面板最小、3D 视野最大。若不复位抽屉，
+  // 用户点完"全景"会发现 3D 还是被半开的结果面板挡着，观感上像没复位干净。
+  // （横屏/桌面下 setDrawerLevel 内部会判掉，不会误改布局）
+  setDrawerLevel('peek');
   clearActiveResult();
 }
 

@@ -21,10 +21,20 @@ import { camera, topCam, renderPass, outline, placeTopCam } from './scene.js';
 let anim = null;
 
 /**
- * 俯仰角靠近边界多少比例开始减速（0.25 = 最后四分之一的行程带阻尼）。
- * 见 rotateBy 的说明：目的是"越转越沉、自然到头"，而不是硬撞停。
+ * 俯仰角靠近边界多少比例开始减速。
+ *
+ * 0.10 = 只有最后 10% 的行程（约 8.6°）带阻尼。
+ *
+ * 为什么从 0.25 缩到 0.10：0.25 意味着**四分之一行程都在减速**，
+ * 用户滑到一半就感觉"越来越不跟手"，滑到 200px 时响应只剩百分之几 ——
+ * 主观感受是"卡死了、坏了"，而不是"到头了"。
+ * 缩窄之后，绝大部分行程是全速跟手的，只在最后约 8° 轻轻收一下，
+ * 到头的瞬间干脆利落，反而更像"撞到底"这种可理解的物理感。
+ *
+ * 注意：这只是**减速带**，不是"软到无限"。真到边界仍然是硬停 ——
+ * 这是球坐标相机的固有性质，任何 3D 软件都一样（见 config.js 的 PHI_MIN 说明）。
  */
-const EDGE_DAMP_ZONE = 0.25;
+const EDGE_DAMP_ZONE = 0.10;
 
 /** 平滑缓动（先加速后减速），让镜头飞行更自然 */
 export const easeInOut = (t) => (t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2);
@@ -99,6 +109,22 @@ export function isAnimating() {
 /** 每帧调用：按 dt（秒）推进动画进度 */
 export function stepAnimation(dt) {
   if (!anim) return;
+
+  // dur <= 0 表示"不做动画、立刻落位"。
+  // 必须单独判掉：否则 anim.t / anim.dur 是 0/0 = NaN，k 变 NaN 后
+  // 所有 lerp 结果全成 NaN，相机位置直接坏掉（半径读出 NaN）。
+  // 这个能力是开屏摆机位要用的（见 main.js 的 flyToOverview(0)）。
+  if (anim.dur <= 0) {
+    view.target.copy(anim.to.target);
+    view2d.target.copy(anim.to.target);
+    view.radius = anim.to.radius;
+    view.phi = anim.to.phi;
+    view.theta = anim.to.theta;
+    view2d.zoom = anim.to.zoom;
+    anim = null;
+    return;
+  }
+
   anim.t += dt * 1000;
   const k = easeInOut(Math.min(1, anim.t / anim.dur));
   view.target.lerpVectors(anim.from.target, anim.to.target, k);

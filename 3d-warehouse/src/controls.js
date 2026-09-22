@@ -32,7 +32,9 @@ export function initControls(dom = renderer.domElement) {
   let lastX = 0;
   let lastY = 0;
   let pinchDist = 0;          // 双指间距（用于算缩放比例）
-  let sens = ROTATE_SENSITIVITY.mouse; // 当前指针的旋转灵敏度（按下时确定）
+  // 当前指针的旋转灵敏度（按下时确定）。x=横向，y=纵向 —— 两者必须分开：
+  // 横向无限可以给大系数，纵向只有 86° 行程必须给小系数，否则一划就撞墙。
+  let sens = ROTATE_SENSITIVITY.mouse;
 
   // ---- 惯性轻扫（flick）用 ----
   // 记录最近的位移轨迹，抬手时据此判断"这一下扫得多快"。
@@ -77,7 +79,7 @@ export function initControls(dom = renderer.domElement) {
         inertia = null;
         return;
       }
-      rotateBy(-inertia.vx * dt * sens, -inertia.vy * dt * sens);
+      rotateBy(-inertia.vx * dt * sens.x, -inertia.vy * dt * sens.y);
       inertia.raf = requestAnimationFrame(step);
     };
     inertia.raf = requestAnimationFrame(step);
@@ -112,7 +114,6 @@ export function initControls(dom = renderer.domElement) {
 
       // 触摸屏旋转更跟手（见 config.ROTATE_SENSITIVITY 的说明）
       sens = e.pointerType === 'touch' ? ROTATE_SENSITIVITY.touch : ROTATE_SENSITIVITY.mouse;
-
       trail = [{ t: performance.now(), x: e.clientX, y: e.clientY }];
     } else if (pointers.size === 2) {
       mode = 'pan';
@@ -144,7 +145,8 @@ export function initControls(dom = renderer.domElement) {
     lastY = e.clientY;
 
     if (mode === 'rotate' && !state.topView) {
-      rotateBy(-dx * sens, -dy * sens);
+      // 横向、纵向用各自系数（纵向行程有限，系数更小，见 config 的说明）
+      rotateBy(-dx * sens.x, -dy * sens.y);
       // 只留最近 FLICK_MS 内的轨迹，用来判断抬手速度
       const now = performance.now();
       trail.push({ t: now, x: e.clientX, y: e.clientY });

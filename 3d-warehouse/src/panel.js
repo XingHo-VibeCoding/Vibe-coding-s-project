@@ -284,3 +284,192 @@ export function setMapUi(on) {
   // 图标是 data-lucide 换名，需要重新渲染
   if (window.lucide) window.lucide.createIcons();
 }
+
+// ---------------------------------------------------------------------------
+// 结果面板抽屉（竖屏手机上可上下拖动）
+// ---------------------------------------------------------------------------
+/**
+ * 抽屉三档高度（占视口高度的比例）。
+ *   peek —— 收起：刚好露出一条完整结果，3D 视野最大
+ *   half —— 半开：能看到两三条结果（从多条候选里挑中一条后自动到这一档）
+ *   full —— 展开：看完整列表 / 详情
+ *
+ * 为什么 peek 是 0.27 而不是更小：
+ * 面板里同时住着四样东西，高度是它们叠出来的 ——
+ *   把手 22 + 面板头 44 + 结果卡 101 + 详情卡标题（收起态）约 50 ≈ 217px
+ * 217 / 844 ≈ 0.257。取 0.27 留一点余量。
+ * 早先设 0.22（186px）时，结果卡会被面板下沿**从中间切断**，
+ * 只剩名字、meta 行看不见 —— 看起来像渲染坏了（真机截图确认过）。
+ * peek 的语义就是"刚好够确认搜到的是哪一条"，卡被切一半就失去意义了。
+ */
+const DRAWER_RATIOS = { peek: 0.27, half: 0.5, full: 0.82 };
+
+/** 当前抽屉档位（'peek' | 'half' | 'full'） */
+let drawerLevel = 'peek';
+let drawerBound = false;
+
+/** 当前是否处于"该启用抽屉"的屏幕（竖屏且偏窄）——横屏是右侧栏，不需要抽屉 */
+function drawerApplies() {
+  if (typeof window === 'undefined') return false;
+  return window.matchMedia('(max-width: 820px)').matches
+    && !window.matchMedia('(orientation: landscape) and (max-height: 560px)').matches;
+}
+
+/** 把档位写成 CSS 变量，真正的高度由 styles.css 的 --drawer-h 决定 */
+function applyDrawer() {
+  if (typeof document === 'undefined') return;
+  const panel = document.getElementById('panel');
+  if (!panel) return;
+  if (!drawerApplies()) {
+    // 横屏 / 桌面：交回 CSS 自己管，不要留变量干扰
+    panel.style.removeProperty('--drawer-h');
+    panel.dataset.drawer = 'off';
+    return;
+  }
+  const ratio = DRAWER_RATIOS[drawerLevel] ?? DRAWER_RATIOS.peek;
+  panel.style.setProperty('--drawer-h', Math.round(ratio * 100) + 'vh');
+  panel.dataset.drawer = drawerLevel;
+}
+
+/**
+ * 设置抽屉档位。
+ * @param {'peek'|'half'|'full'} level
+ */
+export function setDrawerLevel(level) {
+  if (!(level in DRAWER_RATIOS)) return;
+  drawerLevel = level;
+  applyDrawer();
+}
+
+/** 当前抽屉档位 */
+export function getDrawerLevel() {
+  return drawerLevel;
+}
+
+/**
+ * 定位到某条物资后，按需把抽屉推到"半开"。
+ *
+ * ⚠️ 这里有个反直觉的判断，是实测踩出来的：
+ * **只有"结果不止一条、用户需要挑"时才把面板推高。**
+ *
+ * 原因：定位的主任务是"看清这个箱子在哪"，3D 才是主角。
+ * 单条命中是搜索自动定位（没什么可挑的，面包屑 + 详情卡已经说明白是哪一条），
+ * 此时把面板从 peek 推到 half，只会白白吃掉一半屏幕 ——
+ * 自动化实测：单条命中后 3D 舞台只剩 324px / 844px = **38%**，
+ * 比改造前的 76% 还差，正好撞在用户投诉的"3D 被挤成一条缝"上。
+ *
+ * 多条命中就相反：用户必须看见列表才能选，这时面板不升起来才是问题。
+ *
+ * 为什么不推到 full：即便多条，3D 也仍要占主要画面；
+ * half 能看见两三条足够挑，想看全部用户自己再往上拖。
+ */
+export function revealResults() {
+  if (!drawerApplies()) return;
+  // 只数真实卡片，骨架块 / 提示块不算
+  const cards = document.querySelectorAll('#results .result-item.is-card').length;
+  if (cards <= 1) return;
+  if (drawerLevel === 'peek') setDrawerLevel('half');
+}
+
+/**
+ * 绑定抽屉拖拽。只做一次（重复调用会被忽略）。
+ *
+ * 交互设计（对齐手机上的系统级底部抽屉）：
+ *   - 按住把手上下拖动 → 跟手改变高度
+ *   - 松手 → 吸附到最近的一档（不是停在半路，避免留在一个别扭的高度）
+ *   - 快速上滑 / 下滑 → 直接到相邻档（轻扫即换档，不用精确拖到位置）
+ */
+export function initPanelDrawer() {
+  if (drawerBound || typeof document === 'undefined') return;
+  const grip = document.getElementById('panel-grip');
+  const panel = document.getElementById('panel');
+  if (!grip || !panel) return;
+  drawerBound = true;
+
+  let dragging = false;
+  let startY = 0;
+  let startH = 0;
+  let lastY = 0;
+  let lastT = 0;
+  let vy = 0;              // 抬手时的速度（px/ms），用来判断"轻扫换档"
+
+  const vh = () => window.innerHeight;
+
+  function currentH() {
+    return panel.getBoundingClientRect().height;
+  }
+
+  function onDown(e) {
+    if (!drawerApplies()) return;
+    dragging = true;
+    startY = e.clientY;
+    lastY = e.clientY;
+    lastT = performance.now();
+    vy = 0;
+    startH = currentH();
+    panel.classList.add('drawer-dragging');
+    try { grip.setPointerCapture?.(e.pointerId); } catch (_) { /* 捕获失败不影响拖拽 */ }
+  }
+
+  function onMove(e) {
+    if (!dragging) return;
+    e.preventDefault();
+    const now = performance.now();
+    const dy = lastY - e.clientY;          // 往上拖 = 变高
+    if (now > lastT) vy = dy / (now - lastT);
+    lastY = e.clientY;
+    lastT = now;
+
+    const h = Math.max(vh() * 0.12, Math.min(vh() * 0.9, startH + (startY - e.clientY)));
+    panel.style.setProperty('--drawer-h', Math.round(h) + 'px');
+    panel.dataset.drawer = 'drag';
+  }
+
+  function onUp() {
+    if (!dragging) return;
+    dragging = false;
+    panel.classList.remove('drawer-dragging');
+
+    // 轻扫（速度够快）→ 换一档；否则按"离哪一档近"吸附
+    const order = ['peek', 'half', 'full'];
+    const idx = order.indexOf(drawerLevel);
+    if (Math.abs(vy) > 0.5) {
+      const next = vy > 0 ? Math.min(order.length - 1, idx + 1) : Math.max(0, idx - 1);
+      setDrawerLevel(order[next]);
+      return;
+    }
+    const h = currentH();
+    let best = order[0];
+    let bestD = Infinity;
+    for (const lv of order) {
+      const d = Math.abs(h - DRAWER_RATIOS[lv] * vh());
+      if (d < bestD) { bestD = d; best = lv; }
+    }
+    setDrawerLevel(best);
+  }
+
+  grip.addEventListener('pointerdown', onDown);
+  grip.addEventListener('pointermove', onMove, { passive: false });
+  grip.addEventListener('pointerup', onUp);
+  grip.addEventListener('pointercancel', onUp);
+
+  // 键盘可达：把手聚焦后，上下键换档（无障碍）
+  grip.addEventListener('keydown', (e) => {
+    const order = ['peek', 'half', 'full'];
+    const idx = order.indexOf(drawerLevel);
+    if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      setDrawerLevel(order[Math.min(order.length - 1, idx + 1)]);
+    }
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      setDrawerLevel(order[Math.max(0, idx - 1)]);
+    }
+  });
+
+  // 旋屏 / 改窗口大小后，档位要按新视口重新算
+  window.addEventListener('resize', applyDrawer);
+  window.addEventListener('orientationchange', applyDrawer);
+
+  applyDrawer();
+}

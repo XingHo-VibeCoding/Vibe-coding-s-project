@@ -204,6 +204,7 @@ const selState = await mob.evaluate(() => ({
   toggleTxt: document.getElementById('selinfo-toggle').textContent,
   bodyDisplay: getComputedStyle(document.getElementById('selinfo-body')).display,
   panelH: Math.round(document.getElementById('panel').getBoundingClientRect().height),
+  resultsH: Math.round(document.getElementById('results').getBoundingClientRect().height),
   stageH: Math.round(document.querySelector('.stage').getBoundingClientRect().height),
   viewportH: window.innerHeight,
 }));
@@ -262,11 +263,19 @@ const afterExpand = await mob.evaluate(() => ({
   toggleTxt: document.getElementById('selinfo-toggle').textContent,
   bodyDisplay: getComputedStyle(document.getElementById('selinfo-body')).display,
   panelH: Math.round(document.getElementById('panel').getBoundingClientRect().height),
+  resultsH: Math.round(document.getElementById('results').getBoundingClientRect().height),
 }));
 check('点标题行可展开详情', afterExpand.expanded === true && afterExpand.bodyDisplay !== 'none',
   `toggle="${afterExpand.toggleTxt}"`);
-check('展开后面板变高（说明折叠确实省了空间）', afterExpand.panelH > selState.panelH,
-  `收起 ${selState.panelH}px → 展开 ${afterExpand.panelH}px`);
+// ⚠️ 断言对象从 .panel 改成 .results（Day 8 抽屉改造后必须这样测）：
+// 抽屉接管了面板高度之后，面板高度由档位（peek/half/full）钉死，
+// 折叠详情卡**不再**改变面板高度 —— 但它省下的空间仍然真实存在，
+// 只是被 .results（flex:1）吸走了，表现为"结果列表可视区变高"。
+// 也就是说"折叠确实省了空间"这个用户价值没变，只是度量点该跟着布局走。
+// 若继续断言 panelH，测的就是一个已经被设计取代的实现细节，会永远失败。
+check('展开详情卡后结果列表被挤矮（说明折叠确实省了空间）',
+  afterExpand.resultsH < selState.resultsH,
+  `收起时列表 ${selState.resultsH}px → 展开后 ${afterExpand.resultsH}px（面板高 ${selState.panelH}→${afterExpand.panelH} 由抽屉档位决定，不再随内容变）`);
 
 // 再点一次收起
 await tapAt(mob, '#selinfo-head');
@@ -580,7 +589,214 @@ await mob.waitForTimeout(600);
 const mOff = await mob.evaluate(() => window.__diag.mapMode());
 check('M 键进入地图、Esc 退出', mOn === true && mOff === false, `M=${mOn} Esc=${mOff}`);
 
+// =====================================================================
+// 8. 结果面板抽屉（竖屏手机可上下拖动）
+// =====================================================================
+// 背景：手机竖屏纵向空间只有 700px 上下，顶栏 + 底部面板一夹，
+// 3D 只剩中间一条窄缝。改成三档抽屉，让用户自己决定"看货架还是看列表"。
+//
+// ⚠️ 这里必须用真实指针事件驱动把手，不能只调 __api.setDrawer()：
+// 变量写对 ≠ 高度生效。曾经踩过的坑：CSS 用 max-height 消费变量，
+// 而手机网格行是 `auto`（高度由内容决定），max-height 只能往下压不能往上撑 ——
+// 变量 82vh 算出来 692px 全对，面板实际却纹丝不动停在 124px。
+// 所以断言读的是 getBoundingClientRect().height（用户看到多高），
+// 不是 CSS 变量。
+await mob.evaluate(() => window.__api.reset());
+await mob.waitForTimeout(1300);
+
+const dw0 = await mob.evaluate(() => window.__diag.drawer());
+const peekH = Math.round(844 * 0.27);
+check('复位后抽屉回到 peek 档（「全景」要把 3D 视野也让回来）',
+  dw0.level === 'peek' && dw0.gripVisible === true && Math.abs(dw0.height - peekH) <= 12,
+  `level=${dw0.level} height=${dw0.height}（期望≈${peekH}）grip=${dw0.gripVisible}`);
+
+// 三档 → 高度映射必须真的生效（这是"变量写对但高度没动"那个坑的回归锁）
+const dwHeights = {};
+for (const [lv, ratio] of [['half', 0.5], ['full', 0.82], ['peek', 0.27]]) {
+  await mob.evaluate((l) => window.__api.setDrawer(l), lv);
+  await mob.waitForTimeout(400);            // 等过渡走完
+  const d = await mob.evaluate(() => window.__diag.drawer());
+  dwHeights[lv] = { got: d.height, want: Math.round(844 * ratio), attr: d.attr, varH: d.varH };
+}
+check('三档抽屉高度都真实生效（peek/half/full 依次变高）',
+  Math.abs(dwHeights.peek.got - dwHeights.peek.want) <= 12
+  && Math.abs(dwHeights.half.got - dwHeights.half.want) <= 12
+  && Math.abs(dwHeights.full.got - dwHeights.full.want) <= 12,
+  `peek ${dwHeights.peek.got}/${dwHeights.peek.want}、half ${dwHeights.half.got}/${dwHeights.half.want}、full ${dwHeights.full.got}/${dwHeights.full.want}`);
+
+// 真实拖拽：从 peek 慢慢往上拖 → 跟手变高，松手吸附到 full
+//
+// ⚠️ 两个坑，都踩过：
+//   a) 距离要够。拖 300px 只会落到 half —— 486px 离 half 的 422 更近。
+//      这是"吸附到最近一档"的正确行为，不是 bug，别把距离给少了。
+//   b) **必须带真实时间间隔**。若把 pointermove 全在一个同步循环里发完，
+//      540px 会在 1ms 内走完，算出的速度高达 540px/ms —— 而 onUp 里
+//      "速度 > 0.5px/ms 就算轻扫"的分支会把它当成 flick，
+//      于是只前进一档（peek→half），断言就永远等不到 full。
+//      真实手指每帧移动几十像素、间隔约 16ms，速度量级是 1~5px/ms，
+//      所以这里用 40px / 100ms（0.4px/ms）模拟"刻意慢慢拖到位"。
+//      想测"轻扫换档"请用下面那个 flick 用例，别混在一起。
+//
+//      这里可以放心用 setTimeout：本环境里它被节流到约 180ms，
+//      只会让拖动**更慢**，而"更慢"正是本用例想要的（越慢越不会误判成轻扫），
+//      所以节流在这是安全的。反过来需要"更快"的 flick 用例就不能用它了。
+const drag = await mob.evaluate(async () => {
+  const grip = document.getElementById('panel-grip');
+  const panel = document.getElementById('panel');
+  window.__api.setDrawer('peek');
+  await new Promise((r) => setTimeout(r, 400));
+
+  const before = Math.round(panel.getBoundingClientRect().height);
+  const r = grip.getBoundingClientRect();
+  const x = r.left + r.width / 2, y0 = r.top + r.height / 2;
+  const mk = (t, y) => new PointerEvent(t, {
+    pointerId: 71, pointerType: 'touch', isPrimary: true, bubbles: true,
+    cancelable: true, button: 0, clientX: x, clientY: y,
+  });
+
+  grip.dispatchEvent(mk('pointerdown', y0));
+  const steps = 13, step = 40;
+  for (let i = 1; i <= steps; i++) {
+    grip.dispatchEvent(mk('pointermove', y0 - i * step));
+    await new Promise((r) => setTimeout(r, 100));   // 慢拖：约 0.4px/ms，低于轻扫阈值
+  }
+  const during = Math.round(panel.getBoundingClientRect().height);
+  const dragging = panel.classList.contains('drawer-dragging');
+  grip.dispatchEvent(mk('pointerup', y0 - steps * step));
+  await new Promise((r) => setTimeout(r, 450));
+
+  return { before, during, dragging, level: window.__api.getDrawer() };
+});
+check('拖拽把手时面板实时跟手变高（不是抬手才动）',
+  drag.during > drag.before + 250,
+  `${drag.before}px → ${drag.during}px`);
+check('拖拽过程中关掉高度过渡（否则手感像拉橡皮筋）',
+  drag.dragging === true);
+check('慢慢拖到位松手 → 吸附到 full 档（不是停在半路）',
+  drag.level === 'full', `level=${drag.level}，拖到 ${drag.during}px`);
+
+// 轻扫换档：从 full 快速下滑 → 到相邻的 half，不用精确拖到位置
+//
+// ⚠️ 这里**不能用 setTimeout 控制节奏**（实测踩坑）：
+// 页面里跑着 WebGL 渲染循环，后台/无头环境下 setTimeout 会被节流 ——
+// 写 `setTimeout(8)` 实测每步真实耗时约 **180ms**，
+// 于是"快速轻扫"变成了 0.12px/ms 的慢拖，根本触发不了 flick 分支，
+// 面板按"吸附到最近一档"停回 full，断言永远失败。
+// 改用**忙等**拿精确时间：忙等不受节流影响，performance.now() 照常推进。
+// 每步 30px / 20ms = 1.5px/ms，稳稳越过 0.5px/ms 的轻扫阈值。
+const flick = await mob.evaluate(async () => {
+  const grip = document.getElementById('panel-grip');
+  const r = grip.getBoundingClientRect();
+  const x = r.left + r.width / 2, y0 = r.top + r.height / 2;
+  const mk = (t, y) => new PointerEvent(t, {
+    pointerId: 72, pointerType: 'touch', isPrimary: true, bubbles: true,
+    cancelable: true, button: 0, clientX: x, clientY: y,
+  });
+  const spin = (ms) => { const t = performance.now(); while (performance.now() - t < ms) { /* 精确等待 */ } };
+
+  window.__api.setDrawer('full');
+  await new Promise((r) => setTimeout(r, 450));
+
+  grip.dispatchEvent(mk('pointerdown', y0));
+  for (let i = 1; i <= 5; i++) {
+    grip.dispatchEvent(mk('pointermove', y0 + i * 30));
+    spin(20);
+  }
+  grip.dispatchEvent(mk('pointerup', y0 + 150));
+  await new Promise((r) => setTimeout(r, 450));
+  return window.__api.getDrawer();
+});
+check('快速下滑轻扫 → 直接换到相邻档（轻扫即换档）',
+  flick === 'half', `level=${flick}`);
+
+// 键盘可达：把手可聚焦，上下键换档（无障碍）
+const kbDrawer = await mob.evaluate(async () => {
+  const grip = document.getElementById('panel-grip');
+  grip.focus();
+  const focused = document.activeElement === grip;
+  grip.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
+  await new Promise((r) => setTimeout(r, 400));
+  return { focused, level: window.__api.getDrawer() };
+});
+check('把手可聚焦 + 方向键换档（键盘/读屏可用）',
+  kbDrawer.focused === true && kbDrawer.level === 'peek',
+  `focused=${kbDrawer.focused} level=${kbDrawer.level}`);
+
+// 定位后抽屉该不该自动升起？——分两种情况，且方向**相反**，必须都锁住。
+//
+// 这是改造中最反直觉的一处，实测踩出来的：
+//   单条命中（搜索自动定位）→ 面板**不该**升。主任务是"看清箱子在哪"，
+//     没什么可挑的（面包屑 + 详情卡已说明是哪条），
+//     把面板从 peek 推到 half 只会白吃掉一半屏幕。
+//     实测过：升到 half 后 3D 舞台只剩 324/844 = **38%**，
+//     比改造前的 76% 还差，正好撞在用户投诉的"3D 被挤成一条缝"上。
+//   多条命中后**手动挑一条** → 面板**该**升。用户刚在列表里选了一条，
+//     需要同时看见"我选的是哪条"和"它在哪"，half 才够用。
+await mob.evaluate(() => { window.__api.setDrawer('peek'); });
+await mob.evaluate(() => window.__api.search('FZ-SP-00001'));   // 单条命中
+await mob.waitForTimeout(1600);
+const single = await mob.evaluate(() => ({
+  drawer: window.__diag.drawer(),
+  stageH: Math.round(document.querySelector('.stage').getBoundingClientRect().height),
+  viewportH: window.innerHeight,
+  selVisible: !document.getElementById('selinfo').classList.contains('hidden'),
+}));
+// 断言两条，比单看百分比更能说明意图：
+//   ① 舞台占屏 ≥55%（顶栏 98px + peek 228px 之后，剩下的都给 3D）
+//   ② 舞台至少是面板的 2 倍高 —— 直接表达"3D 才是主角，面板只是配角"
+check('单条命中（搜索自动定位）不把面板推高，3D 舞台仍是主角',
+  single.drawer.level === 'peek' && single.selVisible
+  && single.stageH / single.viewportH >= 0.55
+  && single.stageH > single.drawer.height * 2,
+  `level=${single.drawer.level} 详情卡=${single.selVisible} stage=${single.stageH}/${single.viewportH} = ${(single.stageH / single.viewportH * 100).toFixed(0)}%，面板 ${single.drawer.height}px（舞台是它的 ${(single.stageH / single.drawer.height).toFixed(1)} 倍）`);
+
+// 多条命中：搜「杯子」（数据里命中 2 条）→ 自动进地图 → 在列表里挑一条 → 抽屉升到 half
+// 注意别用「电池」：它在演示数据里只命中 1 条，会走"单条自动定位"那条路，
+// 用例名写着"多条"却测了单条，白测。（踩过）
+await mob.evaluate(() => window.__api.reset());
+await mob.waitForTimeout(1300);
+await mob.evaluate(() => window.__api.search('杯子'));
+await mob.waitForTimeout(1600);
+const multi = await mob.evaluate(() => ({
+  cards: window.__diag.cardCount(),
+  mapMode: window.__diag.mapMode(),
+}));
+check('多条命中会自动进地图，并把候选都列出来',
+  multi.cards > 1 && multi.mapMode === true,
+  `卡片数=${multi.cards} mapMode=${multi.mapMode}`);
+
+// 点列表里的第一条（等价于用户从多个候选里挑了一个）
+await mob.evaluate(() => {
+  const card = document.querySelector('#results .result-item.is-card');
+  card?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+});
+await mob.waitForTimeout(1500);
+const picked = await mob.evaluate(() => ({
+  drawer: window.__diag.drawer(),
+  mapMode: window.__diag.mapMode(),
+  hi: window.__diag.highlight(),
+}));
+check('从多条候选里挑一条后，抽屉升到 half（选中的那条看得见）',
+  picked.drawer.level === 'half' && picked.mapMode === false,
+  `level=${picked.drawer.level} height=${picked.drawer.height} mapMode=${picked.mapMode}`);
+
+// 地图模式下抽屉被硬压到 168px：进地图时列表本来就该让位
+await mob.evaluate(() => window.__api.enterMap());
+await mob.waitForTimeout(700);
+const mapDrawer = await mob.evaluate(() => window.__diag.drawer());
+check('地图模式下面板压到 168px 且把手收起（拖了也没意义）',
+  Math.abs(mapDrawer.height - 168) <= 12 && mapDrawer.gripVisible === false,
+  `height=${mapDrawer.height} grip=${mapDrawer.gripVisible}`);
+await mob.evaluate(() => window.__api.exitMap());
+await mob.waitForTimeout(700);
+await mob.evaluate(() => window.__api.setDrawer('peek'));
+await mob.waitForTimeout(400);
+
 check('手机端全程无报错', mErr.length === 0, mErr.slice(0, 3).join(' | '));
+
+// 手机页用完就关：它一直开着会占住一个 WebGL 上下文和一条 rAF 循环，
+// 后面还要开桌面页和横屏页，累积起来会让新页面加载变慢甚至超时（实测遇到过）。
+await mob.close();
 
 // =====================================================================
 // B. 桌面端：确认没被改坏
@@ -798,6 +1014,92 @@ check('复位后标记环重新隐藏（不会留下无指代的红圈）',
   `visible=${m2.visible} highlight=${m2.hi}`);
 
 await desk.screenshot({ path: 'verify/shots/shot-desktop-fixed.png' });
+
+// 桌面端用完就关：一是回收 WebGL 上下文，二是下面横屏页要单独加载。
+// （本地验收用的是 python -m http.server，**单线程**；
+//   多个页面同时拉十几个 ES 模块会互相排队，曾经因此把页面加载卡到超时。
+//   所以这里坚持"一个页面测完关掉，再开下一个"。）
+await desk.close();
+
+// =====================================================================
+// C. 手机横屏（844x390）：面板变右侧栏，不是底部抽屉
+// =====================================================================
+// 横屏是"纵向稀缺、横向富余"，所以换一种排法而不是把竖屏压扁：
+// 底部面板挪到右侧变成一列，3D 独占左边整块，能拿到约 85% 的高度
+// （竖屏只有约 40%）。
+const land = await browser.newPage({
+  viewport: { width: 844, height: 390 },
+  hasTouch: true, isMobile: true, deviceScaleFactor: 2,
+});
+const lErr = [];
+land.on('pageerror', (e) => lErr.push(String(e)));
+land.on('console', (m) => { if (m.type() === 'error') lErr.push(m.text()); });
+
+await land.goto(BASE, { waitUntil: 'load' });
+// 用 try 包住而不是让它抛：页面初始化失败时，
+// 我们要的是一条明确的 FAIL 和原因，而不是整个脚本崩掉、
+// 后面几十条断言一条都不跑（之前就是这样，很难定位）。
+let landReady = true;
+try {
+  await land.waitForFunction(() => window.__diag && window.__diag.ready === true, { timeout: 25000 });
+} catch (e) {
+  landReady = false;
+  const why = await land.evaluate(
+    () => (window.__diag ? JSON.stringify(window.__diag) : 'window.__diag 未挂载')
+  ).catch(() => '连 evaluate 都失败（页面可能没加载出来）');
+  check('横屏页面能正常初始化', false, `等待超时：${why}；控制台报错=${lErr.slice(0, 2).join(' | ') || '无'}`);
+}
+if (landReady) await land.waitForTimeout(600);
+
+// 页面没起来就跳过这一组断言（上面已经报过 FAIL 了），
+// 免得在空页面上 evaluate 一堆 null 又炸一遍，掩盖真正的原因。
+if (landReady) {
+  const landLayout = await land.evaluate(() => {
+    const app = getComputedStyle(document.getElementById('app'));
+    const panel = document.getElementById('panel');
+    const grip = document.getElementById('panel-grip');
+    const stage = document.querySelector('.stage');
+    const pr = panel.getBoundingClientRect();
+    const sr = stage.getBoundingClientRect();
+    return {
+      cols: app.gridTemplateColumns,
+      gripDisplay: getComputedStyle(grip).display,
+      drawerAttr: panel.dataset.drawer,
+      drawerVar: panel.style.getPropertyValue('--drawer-h') || null,
+      panelX: Math.round(pr.left),
+      stageH: Math.round(sr.height),
+      innerH: window.innerHeight,
+      innerW: window.innerWidth,
+    };
+  });
+  check('横屏下 3D 舞台拿到绝大部分高度（≥80%）',
+    landLayout.stageH / landLayout.innerH >= 0.8,
+    `stage=${landLayout.stageH} / viewport=${landLayout.innerH} = ${(landLayout.stageH / landLayout.innerH * 100).toFixed(0)}%`);
+  check('横屏下面板挪到右侧栏（不再占底部）',
+    landLayout.panelX > landLayout.innerW * 0.5,
+    `panel.left=${landLayout.panelX}，视口宽=${landLayout.innerW}，列=${landLayout.cols}`);
+  check('横屏下把手隐藏、抽屉变量清空（右侧栏没有抽屉形态）',
+    landLayout.gripDisplay === 'none' && landLayout.drawerAttr === 'off' && landLayout.drawerVar === null,
+    `grip=${landLayout.gripDisplay} attr=${landLayout.drawerAttr} var=${landLayout.drawerVar}`);
+
+  // 横屏下"点结果 → 定位"必须照常工作（改布局不能把交互改坏）
+  await land.fill('#search', 'FZ-SP-00008');
+  await land.press('#search', 'Enter');
+  await land.waitForTimeout(1500);
+  const landSearch = await land.evaluate(() => ({
+    hi: window.__diag.highlight(),
+    cards: window.__diag.cardCount(),
+    drawerAttr: document.getElementById('panel').dataset.drawer,
+  }));
+  check('横屏下搜索定位仍正常，且不会误写抽屉变量',
+    landSearch.hi && landSearch.hi.outline === 1 && landSearch.drawerAttr === 'off',
+    `highlight=${JSON.stringify(landSearch.hi)} attr=${landSearch.drawerAttr}`);
+
+  await land.screenshot({ path: 'verify/shots/shot-landscape.png' });
+}
+check('横屏全程无报错', lErr.length === 0, lErr.slice(0, 3).join(' | '));
+
+await land.close();
 
 await browser.close();
 

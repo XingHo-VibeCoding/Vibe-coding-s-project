@@ -29,7 +29,7 @@ import { renderResults, setLoading, setLoadError, setResultCount } from './panel
 import { initControls } from './controls.js';
 import { initMinimap, sizeMinimap, renderMinimap } from './minimap.js';
 import { toggleMap, enterMap, exitMap, isMapMode, pickOnMap, setMapUiHook, setPickBoxHook } from './mapview.js';
-import { setMapUi, toggleSelInfo } from './panel.js';
+import { setMapUi, toggleSelInfo, initPanelDrawer } from './panel.js';
 import { exposeApi, exposeError } from './api.js';
 
 /** 判定"轻点"的最大位移（像素）。超过这个距离视为拖拽，不触发地图点选。 */
@@ -49,6 +49,16 @@ let hooks = { stopInertia: () => {} };
 function doToggleMap() {
   toggleMap();
 }
+
+/**
+ * 定位。
+ *
+ * 这里刻意**不再**包一层抽屉逻辑 —— 抽屉的"定位后升到半开"已经收口在
+ * emphasis.js 的 locate() 里（那是所有定位路径的唯一入口）。
+ * 早先版本在这里包了个 locateAndReveal，只覆盖"点结果卡"这一条路，
+ * 搜索自动定位（search.js 直接调 locate）就漏了，表现为结果卡藏着不露。
+ * 统一到 locate 内部之后，这里保持最朴素的转发即可。
+ */
 
 function bindUi() {
   document.getElementById('search-form').addEventListener('submit', (e) => {
@@ -246,6 +256,8 @@ async function init() {
   hooks = initControls(renderer.domElement);
   // 复位时也要掐掉旋转惯性（见 emphasis.resetView 的说明）
   setResetHook(() => hooks.stopInertia?.());
+  // 抽屉把手：竖屏手机上可上下拖动改高度（横屏/桌面自动不生效）
+  initPanelDrawer();
   bindUi();
   setMapUi(false);
   // 此时 state.loading 已是 false，这一次会画出"输入…开始定位"或错误提示
@@ -255,6 +267,22 @@ async function init() {
   // 布局与循环
   resize();
   sizeMinimap();
+
+  // 开屏就把镜头摆到"按当前屏幕比例算出的全景距离"上。
+  //
+  // 这是个**真实缺陷修复**：之前只 import 了 flyToOverview 却没在这调用，
+  // view.radius 一直停在 state.js 的初值 DEFAULT_VIEW.radius = 52 —— 那个值
+  // 是给宽屏（aspect≈1.6）用的。手机竖屏 aspect≈0.6，水平可视半宽只有
+  // 52 × tan(25°) × 0.6 ≈ 14.5，而 A 区在 x=-22、C 区在 x=+22，
+  // **C 区整个被切在画面外**（真机截图确认）。
+  // 只有用户按了「全景」/「复位」之后，defaultRadiusFor 才会被走到、距离才变 96。
+  // 也就是说自适应距离算得对，但"开屏那一次"漏了。
+  //
+  // 必须在 resize() 之后调用：defaultRadiusFor 依赖 camera.aspect，
+  // 而 aspect 是在 resize() 里按画布实际尺寸刷新的。
+  // 用 dur=0 让它直接落位，不要开屏先飞一段动画。
+  flyToOverview(0);
+
   startRenderLoop();
 
   if (window.lucide) window.lucide.createIcons();
