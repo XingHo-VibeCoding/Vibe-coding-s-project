@@ -11,6 +11,10 @@ import { readFileSync } from 'fs';
 const results = [];
 const check = (n, p, d = '') => { results.push({ n, p }); console.log(`${p ? 'PASS' : 'FAIL'}  ${n}${d ? '  → ' + d : ''}`); };
 
+// 前端服务地址。默认 8010；端口被占时用环境变量换：
+//   BASE=http://127.0.0.1:8030/ node verify/verify-api.mjs
+const BASE = process.env.BASE || 'http://127.0.0.1:8010/';
+
 // 先自检前置条件，把"配置没切"这种问题当场说清楚，而不是让人对着
 // "前端调用了后端"这条断言猜半天。
 const cfg = readFileSync(new URL('../src/config.js', import.meta.url), 'utf8');
@@ -32,7 +36,7 @@ const errors = [];
 page.on('pageerror', (e) => errors.push(String(e)));
 page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });
 
-await page.goto('http://127.0.0.1:8010/', { waitUntil: 'load' });
+await page.goto(BASE, { waitUntil: 'load' });
 await page.waitForFunction(() => window.__diag && window.__diag.ready === true, { timeout: 15000 });
 
 // 1. 前端确实请求了后端
@@ -73,7 +77,7 @@ await page.route('**/api/items', (r) => r.abort());
 const p2 = await browser.newPage({ viewport: { width: 1280, height: 800 } });
 const warn = [];
 p2.on('console', (m) => { if (m.type() === 'warning') warn.push(m.text()); });
-await p2.goto('http://127.0.0.1:8010/', { waitUntil: 'load' });
+await p2.goto(BASE, { waitUntil: 'load' });
 await p2.waitForFunction(() => window.__diag && window.__diag.ready === true, { timeout: 15000 });
 const d2 = await p2.evaluate(() => ({ items: window.__diag.itemCount }));
 check('后端不可用时退回演示数据，页面仍可用', d2.items === 26, `items=${d2.items}`);

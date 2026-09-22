@@ -65,7 +65,7 @@
         </div>
       </div>
 
-      <!-- 左下视图控制 -->
+      <!-- 左下视图控制（触摸设备上会被 CSS 挪到右下，把左下让给摇杆） -->
       <div class="controls" role="toolbar" aria-label="视图控制">
         <button id="btn-map" class="btn" type="button" title="切换全屏地图 (M)">
           <i data-lucide="map" class="c-icon"></i><span>地图</span>
@@ -73,6 +73,16 @@
         <button id="btn-reset" class="btn" type="button" title="回到全景 (R)">
           <i data-lucide="maximize" class="c-icon"></i><span>全景</span>
         </button>
+      </div>
+
+      <!-- 左下虚拟摇杆：一根手指就能"走过去"，而不只是转视角。
+           为什么它不影响单指旋转：摇杆的指针事件落在**它自己**身上，
+           controls.js 绑的是画布，根本收不到 —— 两套输入天然隔离。
+           只在触摸设备显示（由 joystick.js 给 body 加 has-joystick），
+           地图模式下隐藏（地图有自己的平移方式，两套同时生效会打架）。 -->
+      <div class="joystick" id="joystick" role="application"
+           aria-label="移动镜头：按住圆盘拖动，向上前进、向下后退、左右平移">
+        <span class="joystick-knob" id="joystick-knob" aria-hidden="true"></span>
       </div>
 
       <div class="hint-bar" id="hint-bar">拖拽旋转 · 滚轮缩放 · 右键平移 · 回车搜索 · R 全景</div>    </main>

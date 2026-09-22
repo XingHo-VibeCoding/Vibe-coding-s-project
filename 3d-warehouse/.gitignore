@@ -19,10 +19,9 @@ verify/shots/
 !shot-mainview-with-url.png
 !shot-marker-none.png
 
-# ============ 发布冒烟测试的临时产物 ============
-# verify/deploy-smoke.sh 每次现从 verify-mobile-ux.mjs 派生一份指向 8020 的副本，
-# 跑完会自己删掉（trap EXIT）。这里兜个底：万一中途被 Ctrl-C / 杀掉进程，
-# 残留文件也不会进仓库。
-_smoke_mobile.mjs
-_smoke_shots/
-_smoke.log
+# ============ 临时调试产物 ============
+# 跑验收 / 换端口调试时，会在本目录留一些一次性脚本和截图（如 _reg.sh、_shot.mjs）。
+# 约定：**所有临时文件一律以下划线开头**，这样一条规则就能盖住，
+# 不必每加一个临时文件名就来改 .gitignore。
+# 本目录下没有正式文件是以下划线开头的（`__pycache__` 已由上面单独忽略），所以不会误伤。
+_*

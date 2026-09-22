@@ -12,7 +12,7 @@
 import * as THREE from 'three';
 import {
   FLY_DURATION, RADIUS_MIN, RADIUS_MAX, DEFAULT_VIEW, defaultRadiusFor,
-  MAP_ZOOM_MIN, MAP_ZOOM_MAX, PHI_MIN, PHI_MAX,
+  MAP_ZOOM_MIN, MAP_ZOOM_MAX, PHI_MIN, PHI_MAX, WALK_BOUNDS,
 } from './config.js';
 import { state, view, view2d } from './state.js';
 import { camera, topCam, renderPass, outline, placeTopCam } from './scene.js';
@@ -235,6 +235,44 @@ export function panBy(dx, dy) {
 /** 当前是否处于 2D 俯视（controls / minimap 都要判断） */
 export function isTopView() {
   return state.topView;
+}
+
+/**
+ * 沿视线方向"走过去"：把注视点（target）在地面上前后左右推。
+ *
+ * 为什么需要它（和 zoomBy 的区别，也是它存在的唯一理由）：
+ *   `zoomBy` 改的是 **radius** —— 你确实离注视点更近了，但绕的还是**同一个点**，
+ *   相当于"站在原地把脸凑近"。想走到另一个货架跟前，必须把 **target 本身**挪过去。
+ *   真机反馈的"一根手指只是移动我的视角，缺少定位"说的就是这个。
+ *
+ * 方向怎么算：
+ *   相机位置 = target + radius·(sinφ·sinθ, cosφ, sinφ·cosθ)（见 updateCamera），
+ *   所以"相机 → target"的**水平**方向就是 `-(sinθ, 0, cosθ)`。
+ *   右方向 = 前进方向 × 上方向(0,1,0)，化简后为 `(cosθ, 0, -sinθ)`。
+ *   直接从 theta 推导，比从相机世界矩阵取列更稳（矩阵在退化姿态下会翻）。
+ *
+ * ⚠️ 只改 X/Z、**绝不动 Y**：摇杆是"在地上走"，不是"飞"。
+ *    若沿真实视线方向（含垂直分量）推，低头时会往地下钻、抬头会飞起来。
+ *    Y 的边界也由 WALK_BOUNDS 只夹 X/Z 来保证（见 config.js）。
+ *
+ * 和 rotateBy / panBy 同理，先 stopFly()：动画推进时 target 每帧被重写，
+ * 用户这时推摇杆会看到"推了没反应"。主动操作即视为接管镜头。
+ *
+ * @param {number} forward 前进量（世界单位，正 = 朝注视点方向走）
+ * @param {number} strafe  左右平移量（世界单位，正 = 往右手边走）
+ */
+export function dollyBy(forward, strafe) {
+  stopFly();
+  if (!forward && !strafe) return;
+
+  const sinT = Math.sin(view.theta);
+  const cosT = Math.cos(view.theta);
+  const fx = -sinT, fz = -cosT;   // 前进（水平）
+  const rx = cosT, rz = -sinT;    // 右手边
+
+  const tgt = view.target;
+  tgt.x = clamp(tgt.x + fx * forward + rx * strafe, WALK_BOUNDS.minX, WALK_BOUNDS.maxX);
+  tgt.z = clamp(tgt.z + fz * forward + rz * strafe, WALK_BOUNDS.minZ, WALK_BOUNDS.maxZ);
 }
 
 export { clamp };

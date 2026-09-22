@@ -210,6 +210,61 @@ body.map-mode .controls { bottom: 12px; }
   border-radius: 7px; border: 1px solid var(--line); max-width: 46vw; z-index: 12;
 }
 
+/* ===================== 左下虚拟摇杆（Day 8 新增） =====================
+ * 作用：一根手指就能"走过去"，而不只是转视角。
+ *
+ * 只在**触摸设备**显示：joystick.js 判断到有触摸能力才给 body 加 has-joystick。
+ * 分工与抽屉一致 —— JS 只给"这台设备该不该有摇杆"这个信号，
+ * 长什么样、多大、怎么过渡都归 CSS。
+ *
+ * 尺寸来自 --joystick-r（由 joystick.js 从 config.JOYSTICK.radius 写进来）。
+ * 为什么不在 CSS 里直接写 92px：摇杆盘的尺寸必须和 JS 算强度用的半径严格一致，
+ * 抄两份迟早改漏一处，导致"推到底只有半速"这种难查的错。 */
+.joystick {
+  display: none;
+  position: absolute;
+  left: 16px;
+  bottom: 16px;
+  width: calc(var(--joystick-r, 46px) * 2);
+  height: calc(var(--joystick-r, 46px) * 2);
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.44);
+  border: 1px solid rgba(20, 30, 40, 0.18);
+  z-index: 14;
+  /* ⚠️ 这行不能少：手指在盘上拖动时若不声明 touch-action: none，
+     浏览器会把它当成滚动手势抢走，表现为"拖了没反应"。 */
+  touch-action: none;
+  user-select: none; -webkit-user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+body.has-joystick .joystick { display: block; }
+/* 地图模式下收起：地图有自己的平移方式，两套同时生效会互相打架 */
+body.map-mode .joystick { display: none; }
+
+.joystick-knob {
+  position: absolute;
+  inset: 0; margin: auto;              /* 自动居中，不依赖手算 margin */
+  width: calc(var(--joystick-r, 46px) * 0.92);
+  height: calc(var(--joystick-r, 46px) * 0.92);
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.94);
+  border: 1px solid rgba(20, 30, 40, 0.22);
+  box-shadow: 0 1px 4px rgba(20, 30, 40, 0.18);
+  /* 只过渡 transform：松手回中时有个"弹回去"的过程，不突兀 */
+  transition: transform .16s ease-out;
+  will-change: transform;
+}
+/* 按住的期间关掉过渡 —— 跟手必须"立刻到位"。
+   留着过渡的话摇杆头会"追"着手指跑，手感发飘。 */
+.joystick.is-active .joystick-knob { transition: none; }
+
+/* 触摸设备上把视图按钮让到**右下**，左下留给摇杆
+   （与《我的世界》一致：左手摇杆、右手按钮）。
+   同时收起提示条 —— 它写的是"右键平移 / 滚轮缩放"这类鼠标操作，
+   在触摸设备上本来就不适用。 */
+body.has-joystick .controls { left: auto; right: 12px; }
+body.has-joystick .hint-bar { display: none; }
+
 /* 小地图 */
 .minimap {
   position: absolute; top: 12px; right: 12px;

@@ -35,16 +35,8 @@ command -v "$PY" >/dev/null 2>&1 || PY=python
 NODE="${NODE:-node}"
 PORT="${PORT:-8020}"
 
-# 临时产物统一加 _smoke 前缀，跑完即删（.gitignore 里也忽略了）
-TMP_NAME="_smoke_mobile.mjs"
-TMP_SCRIPT="$SRC_DIR/$TMP_NAME"
-TMP_SHOTS="$SRC_DIR/_smoke_shots"
-TMP_LOG="$SRC_DIR/_smoke.log"
-
 cleanup() {
   [ -n "${SRV:-}" ] && kill "$SRV" 2>/dev/null
-  rm -f "$TMP_SCRIPT" "$TMP_LOG"
-  rm -rf "$TMP_SHOTS"
 }
 trap cleanup EXIT
 
@@ -62,15 +54,7 @@ if [ -e "$DEPLOY_DIR/backend" ] || [ -e "$DEPLOY_DIR/verify" ]; then
   exit 1
 fi
 
-# ---- 1. 从**权威**验收脚本派生一份指向 $PORT 的临时副本 ----
-# 每次现派生，而不是把派生结果存成文件：
-# 否则验收脚本加了新断言，冒烟测试还停在旧版本，等于白跑（静默失效最危险）。
-sed -e "s|127.0.0.1:8010|127.0.0.1:$PORT|" \
-    -e "s|verify/shots/|_smoke_shots/|g" \
-    "$SRC_DIR/verify/verify-mobile-ux.mjs" > "$TMP_SCRIPT"
-mkdir -p "$TMP_SHOTS"
-
-# ---- 2. 起服务 ----
+# ---- 1. 起服务 ----
 # ⚠️ 起服务与跑测试必须落在**同一条命令**里。沙箱会回收上一条命令留下的后台进程，
 #    分两次调用的话，第二次 curl 会拿到 000（连接被拒）。
 #
@@ -79,26 +63,35 @@ mkdir -p "$TMP_SHOTS"
 #    不认这种路径，`--directory` 会静默失效 -> 服务起得来但一律 404。
 #    （早先为绕开它写死了 Windows 形式的绝对路径，结果是脚本换台机器就跑不了、
 #      还把本机用户名带进了公开仓库 —— 两害相权，还是子壳 cd 干净。）
-#    子壳只影响后台服务进程，主壳的 cwd 仍是 $SRC_DIR，截图仍落在 3d-warehouse/ 下。
+#    子壳只影响后台服务进程，主壳的 cwd 仍是 $SRC_DIR。
 cd "$SRC_DIR" || exit 1
 ( cd "$DEPLOY_DIR" && exec "$PY" -m http.server "$PORT" --bind 127.0.0.1 ) >/dev/null 2>&1 &
 SRV=$!
-sleep 3
 
-# curl 本地要加 --noproxy '*'，否则被 http_proxy 环境变量拦掉
-CODE=$(curl -s --noproxy '*' -o /dev/null -w '%{http_code}' "http://127.0.0.1:$PORT/")
+# 轮询等待服务起来（不用固定 sleep，慢机器上容易假失败）
+CODE=000
+for _ in $(seq 1 40); do
+  # curl 本地要加 --noproxy '*'，否则被 http_proxy 环境变量拦掉
+  CODE=$(curl -s --noproxy '*' -o /dev/null -w '%{http_code}' "http://127.0.0.1:$PORT/" 2>/dev/null)
+  [ "$CODE" = "200" ] && break
+  sleep 0.5
+done
 echo "本地服务 http://127.0.0.1:$PORT/ -> $CODE"
 if [ "$CODE" != "200" ]; then
   echo "服务没起来，中止"
   exit 1
 fi
 
-# ---- 3. 跑完整验收 ----
-# ⚠️ 这里传**裸文件名**、不传绝对路径，同样是上面那个 MSYS 路径坑的另一面：
-#    Git Bash 给的 /d/... 形式 Windows 版 Node 认不出，会报 MODULE_NOT_FOUND。
-#    此时 cwd 已是 $SRC_DIR，裸文件名正好能被解析到；
+# ---- 2. 跑完整验收 ----
+# 直接跑**权威脚本本身**，只把地址换成 $PORT。
+#   早先的做法是 sed 派生一份临时副本再跑（因为地址写死 8010）。
+#   派生副本有个隐蔽风险：权威脚本加了新断言，冒烟测试还停在旧版本 —— 等于白跑，
+#   而且静默失效最难发现。现在 verify-*.mjs 支持 BASE 环境变量，派生这一步就多余了。
+#
+# ⚠️ 传**相对路径**、不传绝对路径：Git Bash 给的 /d/... 形式 Windows 版 Node 认不出，
+#    会报 MODULE_NOT_FOUND。此时 cwd 已是 $SRC_DIR，相对路径正好能被解析到，
 #    Node 也就能顺着 cwd 找到 node_modules/playwright。
-"$NODE" "$TMP_NAME"
+BASE="http://127.0.0.1:$PORT/" "$NODE" verify/verify-mobile-ux.mjs
 RC=$?
 
 echo ""

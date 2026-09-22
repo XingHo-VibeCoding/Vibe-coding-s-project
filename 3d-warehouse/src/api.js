@@ -18,7 +18,7 @@ import { haltInertia } from './controls.js';
 const round2 = (arr) => arr.map((n) => +n.toFixed(2));
 
 /** 挂载调试与自动化接口到 window */
-export function exposeApi() {
+export function exposeApi(joystick) {
   window.__diag = {
     ready: true,
     totalSlots: state.slotMeshes.length,
@@ -84,6 +84,32 @@ export function exposeApi() {
     },
     /** 每个档位对应的 CSS 变量值（供测试断言"档位 → 高度"的映射） */
     drawerRatios: () => ({ peek: 0.27, half: 0.5, full: 0.82 }),
+    /**
+     * 左下虚拟摇杆的状态。
+     *
+     * visible 读的是**实际渲染结果**（display 计算值），不是 body 上的 class ——
+     * class 只说明"这台设备该有摇杆"，地图模式下 CSS 会把它藏起来，
+     * 测试要验的是"用户看不看得见"。
+     */
+    joystick: () => {
+      const el = document.getElementById('joystick');
+      if (!el) return null;
+      const r = el.getBoundingClientRect();
+      // left / bottom 取的是**相对定位父元素**（.stage）的偏移，
+      // 而不是相对视口 —— 竖屏下面板占着屏幕下方一大块，
+      // 相对视口算出来的 bottom 会是两百多像素，看着像"跑到中间去了"。
+      // CSS 的 left/bottom 本来就是相对定位父元素的，这里对齐同一个口径。
+      const host = el.offsetParent ? el.offsetParent.getBoundingClientRect() : null;
+      return {
+        visible: getComputedStyle(el).display !== 'none',
+        hasClass: document.body.classList.contains('has-joystick'),
+        w: Math.round(r.width),
+        h: Math.round(r.height),
+        left: host ? Math.round(r.left - host.left) : Math.round(r.left),
+        bottom: host ? Math.round(host.bottom - r.bottom) : 0,
+        vec: joystick.getVec(),
+      };
+    },
   };
 
   window.__api = {
@@ -110,6 +136,10 @@ export function exposeApi() {
     setDrawer: (level) => { setDrawerLevel(level); return getDrawerLevel(); },
     getDrawer: getDrawerLevel,
     revealResults,
+    // ---- 左下虚拟摇杆（供自动化测试直接推摇杆，不用模拟一整套指针坐标） ----
+    setJoystick: (x, y) => { joystick.setVec(x, y); return joystick.getVec(); },
+    getJoystick: () => joystick.getVec(),
+    resetJoystick: () => { joystick.reset(); return joystick.getVec(); },
     toggleLabels: () => document.getElementById('btn-labels')?.click(),
     toggleView: () => document.getElementById('btn-view')?.click(),
     toggleMinimap: () => document.getElementById('btn-minimap')?.click(),

@@ -3,7 +3,11 @@
 // 运行：把本文件放到 node_modules 同级目录再执行（NODE_PATH 对 ESM import 无效）
 import { chromium } from 'playwright';
 
-const BASE = 'http://127.0.0.1:8010/';
+// 前端服务地址。默认 8010；端口被占（比如蹲着一个不响应的残留服务）时用环境变量换：
+//   BASE=http://127.0.0.1:8030/ node verify/verify-mobile-ux.mjs
+// 为什么要有这个开关：以前地址写死，换端口只能 sed 派生一份临时副本再跑 ——
+// 派生出来的副本和权威脚本会悄悄分叉（改了权威版、跑的还是旧副本），是最危险的一类失效。
+const BASE = process.env.BASE || 'http://127.0.0.1:8010/';
 const results = [];
 const check = (name, pass, detail = '') => {
   results.push({ name, pass, detail });
@@ -42,7 +46,10 @@ await mob.waitForFunction(() => window.__diag && window.__diag.ready === true, {
 async function rotateBy(pointerType, px) {
   return mob.evaluate(async ({ pointerType, px }) => {
     window.__api.reset();
-    await new Promise((r) => setTimeout(r, 1200)); // 等复位动画走完
+    // 这里**不需要**等复位动画走完：本用例量的是"拖动前后 theta 的差"，
+    // 而手势一开始就会调 camera.rotateBy() -> stopFly() 把动画掐断，
+    // 残值会被前后相减抵消掉。（绝对读数就不同了 —— 见 settleView 的说明。）
+    await new Promise((r) => setTimeout(r, 1200));
 
     const st = await import('./src/state.js');
     const canvas = document.querySelector('#canvas-host canvas');
@@ -67,6 +74,35 @@ async function rotateBy(pointerType, px) {
     // 返回"偏航角的有符号变化量"，这是灵敏度系数唯一直接作用的对象
     return +dragged.toFixed(4);
   }, { pointerType, px });
+}
+
+/**
+ * 等镜头**真的落位**，再读绝对坐标。
+ *
+ * 为什么不能再用固定 sleep：
+ *   飞行动画的名义时长是 FLY_DURATION = 850ms，但推进它的渲染循环里
+ *   dt 被 `Math.min(0.05, ...)` 封了顶（见 main.js 的 frame()）。
+ *   无头环境里 rAF 一掉到 8~12fps，每帧只推进 50ms 动画时间，
+ *   850ms 的动画实际要跑 17 帧 ≈ **近 2 秒**。实测：从 [-4.41,3,-1.18]
+ *   复位，1961ms 才回到 [0,3,5]。
+ *
+ *   固定等 1200ms 读到的是**半路的值**，会让所有"镜头现在在哪"的断言随机失败。
+ *   摇杆那条"前进只动 XZ 不动 Y"就是这么挂的：读到的 Y 是复位动画的残值 3.1，
+ *   不是摇杆动的 —— 摇杆代码本身只改 X/Z（见 camera.js 的 dollyBy）。
+ *
+ *   改成轮询到"连续两次读数一致"，与机器快慢无关。
+ * @returns {Promise<number[]>} 落位后的 target
+ */
+async function settleView(page, { timeout = 8000 } = {}) {
+  const t0 = Date.now();
+  let prev = await page.evaluate(() => window.__diag.target());
+  while (Date.now() - t0 < timeout) {
+    await page.waitForTimeout(150);
+    const cur = await page.evaluate(() => window.__diag.target());
+    if (cur.every((v, i) => Math.abs(v - prev[i]) < 1e-6)) return cur;
+    prev = cur;
+  }
+  return prev;   // 超时也返回，让断言自己去报错，不要在这里静默通过
 }
 
 const DRAG_PX = 100;
@@ -789,6 +825,106 @@ check('地图模式下面板压到 168px 且把手收起（拖了也没意义）
   `height=${mapDrawer.height} grip=${mapDrawer.gripVisible}`);
 await mob.evaluate(() => window.__api.exitMap());
 await mob.waitForTimeout(700);
+await mob.evaluate(() => window.__api.setDrawer('peek'));
+await mob.waitForTimeout(400);
+
+// =====================================================================
+// 9. 左下虚拟摇杆（一根手指"走过去"，而不只是转视角）
+// =====================================================================
+// 为什么需要它：原来的三个手势（单指旋转 / 双指平移 / 双指捏合）
+// 改的全是**视角**参数，没有一个是"改变我站的位置"。
+// 摇杆要验的核心不是"它显示出来了"，而是**推它之后 view.target 真的动了** ——
+// 只验显示的话，接错线（推了没反应）也照样全绿。
+await mob.evaluate(() => window.__api.reset());
+// 这里只需等布局稳一下（量的是元素矩形，不是镜头坐标）；
+// 真正"等镜头落位"的地方在下面读 t0 前的 settleView()。
+await mob.waitForTimeout(300);
+
+const joy = await mob.evaluate(() => window.__diag.joystick());
+check('触摸设备上摇杆可见', joy && joy.visible === true,
+  joy ? `visible=${joy.visible} hasClass=${joy.hasClass}` : 'null');
+check('摇杆在**左下角**（left / bottom 都贴着边）',
+  joy.left <= 40 && joy.bottom <= 40,
+  `left=${joy.left} bottom=${joy.bottom}`);
+// 盘尺寸必须和 JS 算强度用的半径严格一致，否则会出现"推到底只有半速"
+check('摇杆盘尺寸 = config.JOYSTICK.radius × 2（CSS 与 JS 同源）',
+  Math.abs(joy.w - 92) <= 2 && Math.abs(joy.h - 92) <= 2,
+  `${joy.w}×${joy.h}（期望 92×92）`);
+
+// 按钮必须让位，否则和摇杆挤在同一个角落
+const ctl = await mob.evaluate(() => {
+  const r = document.querySelector('.controls').getBoundingClientRect();
+  return { left: Math.round(r.left), fromRight: Math.round(window.innerWidth - r.right) };
+});
+check('视图按钮让位到右下（左下整个让给摇杆）',
+  ctl.fromRight <= 40 && ctl.left > 60,
+  `按钮 left=${ctl.left}，距右边=${ctl.fromRight}`);
+
+// ---- 核心：推摇杆 → 注视点真的移动 ----
+// ⚠️ 读 t0 之前必须 settleView()。复位动画在这个环境里要跑近 2 秒，
+//    不等它落位就读，读到的是动画残值，后面"只动 XZ 不动 Y"必然误判。
+const t0 = await settleView(mob);
+check('摇杆测试起点：镜头已复位到场景中心 (0,3,5)',
+  Math.abs(t0[0]) < 0.01 && Math.abs(t0[2] - 5) < 0.01,
+  `target=[${t0}]`);
+
+await mob.evaluate(() => window.__api.setJoystick(0, -1));   // 推到最上 = 前进
+// 推 1200ms 而不是 900ms：摇杆循环里 dt 同样封顶 50ms，
+// 8fps 下 900ms 只能推进约 0.35s 的"模拟时间"（实测位移 3.17），
+// 离阈值 2 太近，机器再慢一点就会假失败。给足余量。
+await mob.waitForTimeout(1200);
+await mob.evaluate(() => window.__api.resetJoystick());
+const t1 = await mob.evaluate(() => window.__diag.target());
+const fwd = Math.hypot(t1[0] - t0[0], t1[2] - t0[2]);
+check('推摇杆向上 = 注视点真的往前走了（不是只转视角）',
+  fwd > 2,
+  `target [${t0}] → [${t1}]，水平位移 ${fwd.toFixed(2)}`);
+check('前进只动 XZ、**不动 Y**（摇杆是"走"不是"飞"）',
+  Math.abs(t1[1] - t0[1]) < 0.01,
+  `Y ${t0[1]} → ${t1[1]}`);
+
+// ---- 左右推 = 平移（不是原地转圈：转圈改的是 theta，平移改的是 target） ----
+await mob.evaluate(() => window.__api.setJoystick(1, 0));    // 推到最右
+await mob.waitForTimeout(1000);
+await mob.evaluate(() => window.__api.resetJoystick());
+const t2 = await mob.evaluate(() => window.__diag.target());
+const side = Math.hypot(t2[0] - t1[0], t2[2] - t1[2]);
+check('推摇杆向右 = 侧向平移（不是原地转圈）',
+  side > 1.5, `水平位移 ${side.toFixed(2)}`);
+
+// ---- 死区：轻微偏移不该让画面自己飘 ----
+await mob.evaluate(() => window.__api.setJoystick(0.05, 0.05));   // 小于 12% 死区
+await mob.waitForTimeout(700);
+await mob.evaluate(() => window.__api.resetJoystick());
+const t3 = await mob.evaluate(() => window.__diag.target());
+const drift = Math.hypot(t3[0] - t2[0], t3[2] - t2[2]);
+check('中心死区生效：轻微偏移不会让画面自己飘',
+  drift < 0.05, `位移 ${drift.toFixed(3)}（应≈0）`);
+
+// ---- 边界：一直推不会走出仓库 ----
+await mob.evaluate(() => window.__api.setJoystick(0, -1));
+await mob.waitForTimeout(4200);                              // 12 单位/秒 × 4.2s ≈ 50 单位，足够撞界
+await mob.evaluate(() => window.__api.resetJoystick());
+const t4 = await mob.evaluate(() => window.__diag.target());
+check('一直往前推会被夹在可走范围内（不会走出仓库）',
+  t4[0] >= -28.01 && t4[0] <= 28.01 && t4[2] >= -8.01 && t4[2] <= 18.01,
+  `target=[${t4}]，边界 X∈[-28,28] Z∈[-8,18]`);
+
+// ---- 地图模式下收起：地图有自己的平移方式，两套同时生效会打架 ----
+await mob.evaluate(() => window.__api.enterMap());
+await mob.waitForTimeout(700);
+const joyMap = await mob.evaluate(() => window.__diag.joystick());
+check('地图模式下摇杆收起（不和地图的平移抢输入）',
+  joyMap.visible === false, `visible=${joyMap.visible}`);
+await mob.evaluate(() => window.__api.exitMap());
+await mob.waitForTimeout(700);
+
+// ---- 关键回归：加了摇杆之后，画布上的单指旋转必须照旧 ----
+// 两套输入靠"事件落在不同元素上"隔离，这条断言就是守这个隔离的。
+const rotAfter = await rotateBy('touch', 100);
+check('加摇杆后画布单指旋转照旧（两套输入互不干扰）',
+  Math.abs(rotAfter) > 0.3, `单指滑 100px 偏航角变化 ${rotAfter} rad`);
+
 await mob.evaluate(() => window.__api.setDrawer('peek'));
 await mob.waitForTimeout(400);
 

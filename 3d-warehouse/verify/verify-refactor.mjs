@@ -2,7 +2,9 @@
 // 运行：NODE_PATH=<workspace>/node_modules node verify-refactor.mjs
 import { chromium } from 'playwright';
 
-const BASE = 'http://127.0.0.1:8010/';
+// 前端服务地址。默认 8010；端口被占（比如蹲着一个不响应的残留服务）时用环境变量换：
+//   BASE=http://127.0.0.1:8030/ node verify/verify-refactor.mjs
+const BASE = process.env.BASE || 'http://127.0.0.1:8010/';
 const results = [];
 const check = (name, pass, detail = '') => {
   results.push({ name, pass, detail });

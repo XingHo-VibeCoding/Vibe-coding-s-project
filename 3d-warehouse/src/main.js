@@ -11,6 +11,7 @@
 //   search.js    搜索匹配规则（输入 → 命中记录）
 //   panel.js     界面 DOM 的唯一出入口（结果列表 / 面包屑 / 详情卡 / 提示）
 //   controls.js  视角输入（鼠标拖拽 + 触摸手势）
+//   joystick.js  左下虚拟摇杆（触摸设备上一根手指"走过去"，不影响单指旋转）
 //   minimap.js   小地图（独立模块，当前界面已停用）
 //   api.js       对外测试接口（window.__diag / window.__api）
 //   main.js      组装层：把上面这些接起来 + 绑定界面事件 + 启动  ← 本文件
@@ -27,6 +28,7 @@ import { locate, resetView, setResetHook } from './emphasis.js';
 import { search } from './search.js';
 import { renderResults, setLoading, setLoadError, setResultCount } from './panel.js';
 import { initControls } from './controls.js';
+import { initJoystick } from './joystick.js';
 import { initMinimap, sizeMinimap, renderMinimap } from './minimap.js';
 import { toggleMap, enterMap, exitMap, isMapMode, pickOnMap, setMapUiHook, setPickBoxHook } from './mapview.js';
 import { setMapUi, toggleSelInfo, initPanelDrawer } from './panel.js';
@@ -41,6 +43,9 @@ const TAP_SLOP = 8;
  * 掐掉旋转惯性，但那个回调注册在 initControls 之前，拿不到局部变量。
  */
 let hooks = { stopInertia: () => {} };
+
+/** 摇杆的测试出口（initJoystick 的返回值），api.js 要用 */
+let joystick = { getVec: () => ({ x: 0, y: 0 }), setVec: () => {}, reset: () => {} };
 
 // ---------------------------------------------------------------------------
 // 界面事件绑定
@@ -258,6 +263,8 @@ async function init() {
   setResetHook(() => hooks.stopInertia?.());
   // 抽屉把手：竖屏手机上可上下拖动改高度（横屏/桌面自动不生效）
   initPanelDrawer();
+  // 左下虚拟摇杆：触摸设备上一根手指"走过去"（桌面端自动不显示）
+  joystick = initJoystick();
   bindUi();
   setMapUi(false);
   // 此时 state.loading 已是 false，这一次会画出"输入…开始定位"或错误提示
@@ -287,7 +294,7 @@ async function init() {
 
   if (window.lucide) window.lucide.createIcons();
 
-  exposeApi();
+  exposeApi(joystick);
 }
 
 init().catch((err) => {
