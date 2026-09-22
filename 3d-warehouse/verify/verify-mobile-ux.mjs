@@ -1101,14 +1101,18 @@ for (const size of LAND_SIZES) {
     check(`[${tag}] 顶栏横跨整个宽度（不能只占左半边，否则看着像被劈成两块）`,
       Math.abs(L0.topbar.w - L0.innerW) <= 2,
       `顶栏宽=${L0.topbar.w}，视口宽=${L0.innerW}`);
-    check(`[${tag}] 面板占满右侧整列高度（顶栏下沿→屏幕底，不留白）`,
+    // 列表在左、3D 在右：与主流地图类应用一致，且把主画布 3D 留给右手拇指
+    check(`[${tag}] 结果列表在左、3D 在右（主流地图类应用的做法）`,
+      L0.panel.l < L0.innerW * 0.5 && L0.stage.l >= L0.panel.w,
+      `面板 left=${L0.panel.l}（宽${L0.panel.w}），3D left=${L0.stage.l}，视口宽=${L0.innerW}`);
+    check(`[${tag}] 面板占满整列高度（顶栏下沿→屏幕底，不留白）`,
       Math.abs(L0.panel.t - L0.topbar.b) <= 2
       && Math.abs(L0.panel.b - L0.innerH) <= 2
       && L0.panel.h >= L0.innerH * 0.75,
       `面板 ${L0.panel.t}~${L0.panel.b} h${L0.panel.h}，顶栏下沿=${L0.topbar.b}，视口高=${L0.innerH}`);
     check(`[${tag}] 侧栏够宽（≥240px，卡片不被挤到频繁换行）`,
       L0.panel.w >= 240, `面板宽=${L0.panel.w}`);
-    check(`[${tag}] 把手隐藏、抽屉变量清空（右侧栏没有抽屉形态）`,
+    check(`[${tag}] 把手隐藏、抽屉变量清空（侧栏没有抽屉形态）`,
       L0.gripDisplay === 'none' && L0.drawerAttr === 'off' && L0.drawerVar === null,
       `grip=${L0.gripDisplay} attr=${L0.drawerAttr} var=${L0.drawerVar}`);
     check(`[${tag}] 3D 舞台拿到绝大部分高度（≥80%）`,

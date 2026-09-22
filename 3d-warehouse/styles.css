@@ -485,7 +485,7 @@ body.map-mode .controls { bottom: 12px; }
  * 两边条件一旦不一致，就会出现"JS 以为该有抽屉、CSS 以为不该有"的错位。
  */
 @media (max-width: 820px) and (orientation: portrait) {
-  /* ---- 抽屉把手显示（竖屏手机；横屏是右侧栏，不需要） ----
+  /* ---- 抽屉把手显示（竖屏手机；横屏是侧栏，不需要） ----
    * panel.js 会把 --drawer-h 写成 27vh / 50vh / 82vh，这里直接消费。
    *
    * ⚠️ 这里必须用 **height**，不能用 max-height（实测踩过的坑）：
@@ -533,7 +533,7 @@ body.map-mode .controls { bottom: 12px; }
   /* 地图模式下把面板压矮，把画面尽可能让给地图。
      ⚠️ 这一组必须带 `orientation: portrait`（理由同上面抽屉那段）：
      600x360 这类**极窄横屏**同时命中 `max-width: 600px` 和横屏查询，
-     若不加限定，横屏下地图模式会把右侧栏也压成 168px，
+     若不加限定，横屏下地图模式会把侧栏也压成 168px，
      下面又留一大片空白 —— 横屏的侧栏本来就该占满整列高度。
 
      ⚠️ 高度不能压过头（真机 + 自动化都验证过的坑）：
@@ -581,7 +581,7 @@ body.map-mode .controls { bottom: 12px; }
 
 /* ============ 地图模式下把底部面板压矮（只在竖屏手机） ============
  * 与上面抽屉同理，必须带 `orientation: portrait` ——
- * 否则 600x360 这类极窄横屏会被一起压矮，右侧栏下方留一片空白。
+ * 否则 600x360 这类极窄横屏会被一起压矮，侧栏下方留一片空白。
  * 横屏下的地图模式交给横屏块自己处理（侧栏占满整列高度）。
  */
 @media (max-width: 600px) and (orientation: portrait) {
@@ -609,8 +609,8 @@ body.map-mode .controls { bottom: 12px; }
  * 货架被夹在中间一条窄缝里（真机截图里非常明显）。
  *
  * 横屏恰好相反：**纵向稀缺、横向富余**。所以思路不是"把竖屏布局压扁"，
- * 而是换一种排法 —— 把底部面板挪到**右侧**变成一列，
- * 3D 舞台独占左边的整块区域。这样：
+ * 而是换一种排法 —— 把底部面板挪到**侧边**变成一列，
+ * 3D 舞台独占剩下的整块区域（列表在左、3D 在右，理由见下面的两列布局注释）。这样：
  *   - 3D 区拿到几乎全部高度（竖屏只有 ~40%，横屏能到 ~85%）
  *   - 结果列表仍然完整可读，只是变成了侧栏
  *   - 搜索栏回到顶栏一行，不再吃掉一整行高度
@@ -654,7 +654,13 @@ body.map-mode .controls { bottom: 12px; }
   }
   .demo-flag { margin-left: 0; font-size: 10px; padding: 3px 6px; }
 
-  /* 两列布局：左边 3D，右边结果面板。
+  /* 两列布局：**左边结果列表，右边 3D**。
+   *
+   * 为什么列表在左（真机反馈后从右侧换过来）：
+   *   1. 与主流地图类应用一致 —— Google 地图 / 高德 / 百度横屏时，
+   *      搜索结果列表都在左侧，地图在右。
+   *   2. 多数人是右手惯用，把**主画布 3D 留在右手拇指下**更好滑；
+   *      列表基本只读（点一下定位），放左边用左手就够了。
    *
    * ⚠️ 侧栏宽度必须用 `clamp()` 定，**不能写 `minmax(200px, 34%)`**（实测踩坑）：
    * `1fr` 会贪婪地吃掉所有富余空间，于是 `minmax` 的列总被压到**最小值**——
@@ -663,27 +669,28 @@ body.map-mode .controls { bottom: 12px; }
    * clamp 给出确定宽度：下限 240px（容得下卡片）、理想 38%、上限 420px
    * （超宽横屏/平板时侧栏不至于宽得离谱）。 */
   #app {
-    grid-template-columns: 1fr clamp(240px, 38%, 420px);
+    grid-template-columns: clamp(240px, 38%, 420px) 1fr;
     grid-template-rows: auto 1fr;
   }
-  .stage { grid-column: 1; grid-row: 2; min-height: 0; }
   .panel {
-    grid-column: 2;
+    grid-column: 1;
     grid-row: 2;
-    border-left: 1px solid var(--line);
-    border-top: none;                    /* 从"底部面板"变成"右侧栏" */
-    max-height: none;                    /* 侧栏占满整个高度，不用限高 */
-    height: 100%;                        /* 从顶栏下沿一直到屏幕底部，不留白 */
-    box-shadow: -2px 0 10px rgba(20,30,40,0.08);
-    transition: none;                    /* 侧栏没有高度变化，不需要过渡 */
+    border-right: 1px solid var(--line);   /* 侧栏在左，分隔线换到右侧 */
+    border-left: none;
+    border-top: none;                     /* 从"底部面板"变成"左侧栏" */
+    max-height: none;                     /* 侧栏占满整个高度，不用限高 */
+    height: 100%;                         /* 从顶栏下沿一直到屏幕底部，不留白 */
+    box-shadow: 2px 0 10px rgba(20,30,40,0.08);   /* 阴影朝右投 */
+    transition: none;                     /* 侧栏没有高度变化，不需要过渡 */
   }
-  /* 横屏是"右侧栏"形态，不存在底部抽屉 —— 把手必须收起来。
+  .stage { grid-column: 2; grid-row: 2; min-height: 0; }
+  /* 横屏是"左侧栏"形态，不存在底部抽屉 —— 把手必须收起来。
      这条写在这里而不是靠 panel.js 判断，是因为它属于**布局形态**：
      即使 JS 没跑到，横屏也不该露出一根拖不动的把手。 */
   .panel-grip { display: none !important; }
   .results { overflow-y: auto; }
 
-  /* 地图模式下右侧栏照样占满整列（列表要能看全，画面留给左边） */
+  /* 地图模式下侧栏照样占满整列（列表要能看全，画面留给 3D） */
   body.map-mode .panel { max-height: none; height: 100%; }
   body.map-mode .results { max-height: none; }
   body.map-mode .selinfo { display: block; }

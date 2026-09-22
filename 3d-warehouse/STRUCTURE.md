@@ -124,7 +124,7 @@
 > 包了一层，结果搜索那条路漏了 —— 表现为"搜出来高亮了，但结果卡还藏在收起的面板里"。
 >
 > 横屏（`orientation: landscape and max-height: 560px`）走的是**另一套布局**：
-> 面板变成右侧栏、把手隐藏、抽屉变量清空。判定用 `max-height` 而不是 orientation，
+> 面板变成**左侧栏**、把手隐藏、抽屉变量清空。判定用 `max-height` 而不是 orientation，
 > 因为真正稀缺的是高度 —— 900×420 的窗口和横屏手机需要的是同一种布局。
 >
 > ⚠️ **抽屉规则必须带 `orientation: portrait`，否则会污染横屏**（真机反馈修复）。
@@ -132,7 +132,7 @@
 > `max-width: 820px` 和横屏查询，而抽屉那条 `.panel[data-drawer] { height: ... }`
 > 优先级 (0,2,0) **高于**横屏那条 `.panel { height: 100% }` (0,1,0) ——
 > 优先级赢过书写顺序，于是横屏的面板高度被无声推翻，只剩 `40vh` = 144px，
-> 右侧栏下方留一大片空白，`.results` 被压到 48px 连一条结果卡都显示不全。
+> 侧栏下方留一大片空白，`.results` 被压到 48px 连一条结果卡都显示不全。
 > 同理 `body.map-mode .panel[data-drawer] { height: 168px }` 也要加 portrait。
 >
 > **判断法**：CSS 里的条件要和 `panel.js` 的 `drawerApplies()` **完全一致**
