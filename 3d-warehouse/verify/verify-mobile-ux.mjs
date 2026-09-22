@@ -1101,17 +1101,21 @@ for (const size of LAND_SIZES) {
     check(`[${tag}] 顶栏横跨整个宽度（不能只占左半边，否则看着像被劈成两块）`,
       Math.abs(L0.topbar.w - L0.innerW) <= 2,
       `顶栏宽=${L0.topbar.w}，视口宽=${L0.innerW}`);
-    // 列表在左、3D 在右：与主流地图类应用一致，且把主画布 3D 留给右手拇指
-    check(`[${tag}] 结果列表在左、3D 在右（主流地图类应用的做法）`,
-      L0.panel.l < L0.innerW * 0.5 && L0.stage.l >= L0.panel.w,
-      `面板 left=${L0.panel.l}（宽${L0.panel.w}），3D left=${L0.stage.l}，视口宽=${L0.innerW}`);
+    // 列表在右、3D 在左：与**桌面端**保持一致（桌面基础层就是 1fr 340px），
+    // 同一产品不因为换设备就把列表翻到另一侧。
+    // 判据：面板左沿必须落在右半边，且正好接在 3D 舞台的右沿上。
+    check(`[${tag}] 结果列表在右、3D 在左（与桌面端一致）`,
+      L0.panel.l >= L0.innerW * 0.5 && Math.abs(L0.panel.l - L0.stage.w) <= 2,
+      `3D 宽=${L0.stage.w}，面板 left=${L0.panel.l}（宽${L0.panel.w}），视口宽=${L0.innerW}`);
     check(`[${tag}] 面板占满整列高度（顶栏下沿→屏幕底，不留白）`,
       Math.abs(L0.panel.t - L0.topbar.b) <= 2
       && Math.abs(L0.panel.b - L0.innerH) <= 2
       && L0.panel.h >= L0.innerH * 0.75,
       `面板 ${L0.panel.t}~${L0.panel.b} h${L0.panel.h}，顶栏下沿=${L0.topbar.b}，视口高=${L0.innerH}`);
-    check(`[${tag}] 侧栏够宽（≥240px，卡片不被挤到频繁换行）`,
-      L0.panel.w >= 240, `面板宽=${L0.panel.w}`);
+    // 收窄后的下限是 clamp 的 184px（用户要求"侧栏窄一点，把地方让给 3D"）。
+    // 这里守 180px：再窄下去卡片会被挤到几乎只剩标题、信息看不全。
+    check(`[${tag}] 侧栏不至于窄到放不下卡片（≥180px）`,
+      L0.panel.w >= 180, `面板宽=${L0.panel.w}`);
     check(`[${tag}] 把手隐藏、抽屉变量清空（侧栏没有抽屉形态）`,
       L0.gripDisplay === 'none' && L0.drawerAttr === 'off' && L0.drawerVar === null,
       `grip=${L0.gripDisplay} attr=${L0.drawerAttr} var=${L0.drawerVar}`);
