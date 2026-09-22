@@ -126,6 +126,20 @@
 > 横屏（`orientation: landscape and max-height: 560px`）走的是**另一套布局**：
 > 面板变成右侧栏、把手隐藏、抽屉变量清空。判定用 `max-height` 而不是 orientation，
 > 因为真正稀缺的是高度 —— 900×420 的窗口和横屏手机需要的是同一种布局。
+>
+> ⚠️ **抽屉规则必须带 `orientation: portrait`，否则会污染横屏**（真机反馈修复）。
+> 两套规则的条件有重叠区间：`740×360` 的横屏手机**同时命中**
+> `max-width: 820px` 和横屏查询，而抽屉那条 `.panel[data-drawer] { height: ... }`
+> 优先级 (0,2,0) **高于**横屏那条 `.panel { height: 100% }` (0,1,0) ——
+> 优先级赢过书写顺序，于是横屏的面板高度被无声推翻，只剩 `40vh` = 144px，
+> 右侧栏下方留一大片空白，`.results` 被压到 48px 连一条结果卡都显示不全。
+> 同理 `body.map-mode .panel[data-drawer] { height: 168px }` 也要加 portrait。
+>
+> **判断法**：CSS 里的条件要和 `panel.js` 的 `drawerApplies()` **完全一致**
+> （那边是 `max-width: 820px && !(landscape && max-height: 560px)`）。
+> 两边条件一旦漂移，就会出现"JS 以为该有抽屉、CSS 以为不该有"的错位。
+> 而 `844×390` 因为 > 820 不匹配抽屉那条，**完全正常** ——
+> 所以横屏回归必须测多个宽度（844 / 740 / 600），只测一个会漏掉重叠区的 bug。
 
 ---
 

@@ -1022,84 +1022,128 @@ await desk.screenshot({ path: 'verify/shots/shot-desktop-fixed.png' });
 await desk.close();
 
 // =====================================================================
-// C. 手机横屏（844x390）：面板变右侧栏，不是底部抽屉
+// C. 手机横屏：面板变右侧栏，不是底部抽屉
 // =====================================================================
 // 横屏是"纵向稀缺、横向富余"，所以换一种排法而不是把竖屏压扁：
-// 底部面板挪到右侧变成一列，3D 独占左边整块，能拿到约 85% 的高度
-// （竖屏只有约 40%）。
-const land = await browser.newPage({
-  viewport: { width: 844, height: 390 },
-  hasTouch: true, isMobile: true, deviceScaleFactor: 2,
-});
-const lErr = [];
-land.on('pageerror', (e) => lErr.push(String(e)));
-land.on('console', (m) => { if (m.type() === 'error') lErr.push(m.text()); });
+// 底部面板挪到右侧变成一列，3D 独占左边整块，能拿到约 85% 的高度。
+//
+// ⚠️ **必须测多个宽度，只测 844 会漏掉真 bug**（实测踩过）：
+// 抽屉规则原本写在 `@media (max-width: 820px)` 里，横屏写在
+// `@media (orientation: landscape) and (max-height: 560px)` 里，
+// 两者在 **740x360 这类机型上会同时命中**，而抽屉那条 `.panel[data-drawer]`
+// 优先级更高，把横屏的 `height: 100%` 无声推翻 ——
+// 面板高度掉回 40vh = 144px，只占右侧上半截，下面 167px 全空白；
+// 连带 `.results` 被压到 48px，一条 119px 的结果卡完全显示不出来。
+// 844 宽因为 > 820 不匹配抽屉那条，**完全正常** —— 只测 844 就永远发现不了。
+// 所以这里固定跑三档宽度，其中 740 / 600 专门覆盖"重叠区间"。
+const LAND_SIZES = [
+  { w: 844, h: 390, tag: 'iPhone 横屏' },
+  { w: 740, h: 360, tag: '小机横屏(≤820，重叠区间)' },
+  { w: 600, h: 360, tag: '极窄横屏(≤600，还命中 map-mode 规则)' },
+];
 
-await land.goto(BASE, { waitUntil: 'load' });
-// 用 try 包住而不是让它抛：页面初始化失败时，
-// 我们要的是一条明确的 FAIL 和原因，而不是整个脚本崩掉、
-// 后面几十条断言一条都不跑（之前就是这样，很难定位）。
-let landReady = true;
-try {
-  await land.waitForFunction(() => window.__diag && window.__diag.ready === true, { timeout: 25000 });
-} catch (e) {
-  landReady = false;
-  const why = await land.evaluate(
-    () => (window.__diag ? JSON.stringify(window.__diag) : 'window.__diag 未挂载')
-  ).catch(() => '连 evaluate 都失败（页面可能没加载出来）');
-  check('横屏页面能正常初始化', false, `等待超时：${why}；控制台报错=${lErr.slice(0, 2).join(' | ') || '无'}`);
-}
-if (landReady) await land.waitForTimeout(600);
-
-// 页面没起来就跳过这一组断言（上面已经报过 FAIL 了），
-// 免得在空页面上 evaluate 一堆 null 又炸一遍，掩盖真正的原因。
-if (landReady) {
-  const landLayout = await land.evaluate(() => {
-    const app = getComputedStyle(document.getElementById('app'));
-    const panel = document.getElementById('panel');
-    const grip = document.getElementById('panel-grip');
-    const stage = document.querySelector('.stage');
-    const pr = panel.getBoundingClientRect();
-    const sr = stage.getBoundingClientRect();
-    return {
-      cols: app.gridTemplateColumns,
-      gripDisplay: getComputedStyle(grip).display,
-      drawerAttr: panel.dataset.drawer,
-      drawerVar: panel.style.getPropertyValue('--drawer-h') || null,
-      panelX: Math.round(pr.left),
-      stageH: Math.round(sr.height),
-      innerH: window.innerHeight,
-      innerW: window.innerWidth,
-    };
+for (const size of LAND_SIZES) {
+  const land = await browser.newPage({
+    viewport: { width: size.w, height: size.h },
+    hasTouch: true, isMobile: true, deviceScaleFactor: 2,
   });
-  check('横屏下 3D 舞台拿到绝大部分高度（≥80%）',
-    landLayout.stageH / landLayout.innerH >= 0.8,
-    `stage=${landLayout.stageH} / viewport=${landLayout.innerH} = ${(landLayout.stageH / landLayout.innerH * 100).toFixed(0)}%`);
-  check('横屏下面板挪到右侧栏（不再占底部）',
-    landLayout.panelX > landLayout.innerW * 0.5,
-    `panel.left=${landLayout.panelX}，视口宽=${landLayout.innerW}，列=${landLayout.cols}`);
-  check('横屏下把手隐藏、抽屉变量清空（右侧栏没有抽屉形态）',
-    landLayout.gripDisplay === 'none' && landLayout.drawerAttr === 'off' && landLayout.drawerVar === null,
-    `grip=${landLayout.gripDisplay} attr=${landLayout.drawerAttr} var=${landLayout.drawerVar}`);
+  const lErr = [];
+  land.on('pageerror', (e) => lErr.push(String(e)));
+  land.on('console', (m) => { if (m.type() === 'error') lErr.push(m.text()); });
 
-  // 横屏下"点结果 → 定位"必须照常工作（改布局不能把交互改坏）
-  await land.fill('#search', 'FZ-SP-00008');
-  await land.press('#search', 'Enter');
-  await land.waitForTimeout(1500);
-  const landSearch = await land.evaluate(() => ({
-    hi: window.__diag.highlight(),
-    cards: window.__diag.cardCount(),
-    drawerAttr: document.getElementById('panel').dataset.drawer,
-  }));
-  check('横屏下搜索定位仍正常，且不会误写抽屉变量',
-    landSearch.hi && landSearch.hi.outline === 1 && landSearch.drawerAttr === 'off',
-    `highlight=${JSON.stringify(landSearch.hi)} attr=${landSearch.drawerAttr}`);
+  const tag = `${size.w}x${size.h}`;
+  await land.goto(BASE, { waitUntil: 'load' });
+  // 用 try 包住而不是让它抛：页面初始化失败时，
+  // 我们要的是一条明确的 FAIL 和原因，而不是整个脚本崩掉、
+  // 后面几十条断言一条都不跑（之前就是这样，很难定位）。
+  let landReady = true;
+  try {
+    await land.waitForFunction(() => window.__diag && window.__diag.ready === true, { timeout: 25000 });
+  } catch (e) {
+    landReady = false;
+    const why = await land.evaluate(
+      () => (window.__diag ? JSON.stringify(window.__diag) : 'window.__diag 未挂载')
+    ).catch(() => '连 evaluate 都失败（页面可能没加载出来）');
+    check(`[${tag}] 横屏页面能正常初始化`, false,
+      `等待超时：${why}；控制台报错=${lErr.slice(0, 2).join(' | ') || '无'}`);
+  }
+  if (landReady) await land.waitForTimeout(600);
 
-  await land.screenshot({ path: 'verify/shots/shot-landscape.png' });
+  // 页面没起来就跳过这一组断言（上面已经报过 FAIL 了），
+  // 免得在空页面上 evaluate 一堆 null 又炸一遍，掩盖真正的原因。
+  if (landReady) {
+    // 统一的量尺：把"关键区域的盒子"一次量全，后面复用
+    const measure = () => land.evaluate(() => {
+      const box = (el) => {
+        if (!el) return null;
+        const r = el.getBoundingClientRect();
+        return { t: Math.round(r.top), b: Math.round(r.bottom), h: Math.round(r.height), w: Math.round(r.width), l: Math.round(r.left) };
+      };
+      const si = document.getElementById('selinfo');
+      const cards = [...document.querySelectorAll('#results .result-item.is-card')];
+      return {
+        topbar: box(document.querySelector('.topbar')),
+        stage: box(document.querySelector('.stage')),
+        panel: box(document.getElementById('panel')),
+        results: box(document.getElementById('results')),
+        selinfo: (si && !si.classList.contains('hidden')) ? box(si) : null,
+        gripDisplay: getComputedStyle(document.getElementById('panel-grip')).display,
+        drawerAttr: document.getElementById('panel').dataset.drawer,
+        drawerVar: document.getElementById('panel').style.getPropertyValue('--drawer-h') || null,
+        cards: cards.length,
+        cardHs: cards.map((c) => Math.round(c.getBoundingClientRect().height)),
+        innerH: window.innerHeight,
+        innerW: window.innerWidth,
+      };
+    });
+
+    const L0 = await measure();
+    check(`[${tag}] 顶栏横跨整个宽度（不能只占左半边，否则看着像被劈成两块）`,
+      Math.abs(L0.topbar.w - L0.innerW) <= 2,
+      `顶栏宽=${L0.topbar.w}，视口宽=${L0.innerW}`);
+    check(`[${tag}] 面板占满右侧整列高度（顶栏下沿→屏幕底，不留白）`,
+      Math.abs(L0.panel.t - L0.topbar.b) <= 2
+      && Math.abs(L0.panel.b - L0.innerH) <= 2
+      && L0.panel.h >= L0.innerH * 0.75,
+      `面板 ${L0.panel.t}~${L0.panel.b} h${L0.panel.h}，顶栏下沿=${L0.topbar.b}，视口高=${L0.innerH}`);
+    check(`[${tag}] 侧栏够宽（≥240px，卡片不被挤到频繁换行）`,
+      L0.panel.w >= 240, `面板宽=${L0.panel.w}`);
+    check(`[${tag}] 把手隐藏、抽屉变量清空（右侧栏没有抽屉形态）`,
+      L0.gripDisplay === 'none' && L0.drawerAttr === 'off' && L0.drawerVar === null,
+      `grip=${L0.gripDisplay} attr=${L0.drawerAttr} var=${L0.drawerVar}`);
+    check(`[${tag}] 3D 舞台拿到绝大部分高度（≥80%）`,
+      L0.stage.h / L0.innerH >= 0.8,
+      `stage=${L0.stage.h}/${L0.innerH} = ${(L0.stage.h / L0.innerH * 100).toFixed(0)}%`);
+
+    // ---- 搜多条 → 自动进地图 → 从列表里挑一条 → 回 3D ----
+    // 这一段是核心回归：点击前后**面板高度必须不变**，且列表要仍然装得下结果卡。
+    await land.evaluate(() => window.__api.search('杯子'));
+    await land.waitForTimeout(1700);
+    const L1 = await measure();
+    check(`[${tag}] 多条命中自动进地图，候选都列出来`,
+      L1.cards > 1 && Math.abs(L1.panel.h - L0.panel.h) <= 2,
+      `卡片数=${L1.cards}，面板高=${L1.panel.h}（应保持 ${L0.panel.h}）`);
+
+    await land.evaluate(() => {
+      document.querySelector('#results .result-item.is-card')?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    await land.waitForTimeout(1700);
+    const L2 = await measure();
+    check(`[${tag}] 点结果回 3D 后面板高度不变（不会被内容顶矮留出空白）`,
+      Math.abs(L2.panel.h - L0.panel.h) <= 2,
+      `点击前 ${L1.panel.h}px → 点击后 ${L2.panel.h}px`);
+    check(`[${tag}] 点结果回 3D 后列表仍能完整看到一条结果（可操作空间没被挤没）`,
+      L2.results.h >= Math.max(...L2.cardHs),
+      `列表可视高=${L2.results.h}px，单张卡片高=${Math.max(...L2.cardHs)}px，详情卡=${L2.selinfo ? L2.selinfo.h + 'px' : '无'}`);
+    check(`[${tag}] 横屏下搜索定位仍正常，且不会误写抽屉变量`,
+      L2.drawerAttr === 'off' && L2.results.h > 100,
+      `attr=${L2.drawerAttr} 列表高=${L2.results.h}`);
+
+    await land.screenshot({ path: `verify/shots/shot-landscape-${size.w}.png` });
+  }
+  check(`[${tag}] 横屏全程无报错`, lErr.length === 0, lErr.slice(0, 3).join(' | '));
+  await land.close();
 }
-check('横屏全程无报错', lErr.length === 0, lErr.slice(0, 3).join(' | '));
-
-await land.close();
 
 await browser.close();
 
