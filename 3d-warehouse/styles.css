@@ -5,12 +5,20 @@
   --line: #d8dee7;
   --line-strong: #c2ccd8;
   --ink: #1f2933;
-  --muted: #6b7785;
+  /* 次要文字色。Day 9 从 #6b7785 调深：旧值在白面板上 4.56:1 只是勉强过线，
+     一换到浅灰底就掉到 3.89–4.32（--accent-soft / --bg / 小地图表头三处不合格）。
+     调深后四处同时达标（4.86 / 4.94 / 5.39 / 5.70），与 --ink 仍有 2.59 的层次差，
+     不会把"次要"读成"主要"。复算见 DESIGN-RULES.md §1.3。 */
+  --muted: #5c6874;
   --accent: #2f6f9f;        /* 沉稳钢蓝，仅作强调，不铺满 */
   --accent-soft: #e6eef5;
   --accent-ink: #235a82;
   --highlight: #e8543b;     /* 目标暖红 */
   --highlight-soft: #fdeae6;
+  /* 标签文字色。旧值是硬编码在 .rtag 里的 #b06a00，在 #fbf2dd 底上只有 3.84:1；
+     提到 #8f5600（5.39:1）并抽成令牌，顺手堵掉一处散落的硬编码色值。
+     注意：src/card-canvas.js 的 CARD_COLORS 是这里的镜像，改值要同步。 */
+  --tag-ink: #8f5600;
   --topbar: #222e3a;
   --topbar-ink: #e8edf3;
   --shadow: 0 1px 3px rgba(20, 30, 40, 0.14);
@@ -53,6 +61,25 @@ body {
   background: var(--bg);
   -webkit-font-smoothing: antialiased;
   -webkit-tap-highlight-color: transparent;
+}
+
+/* ===================== 统一焦点环 =====================
+ *
+ * 键盘用户靠它知道"现在焦点在哪"。Day 9 之前只有 .panel-tab 和 .panel-grip
+ * 各写各的，而 #search 直接写了 `outline: none` —— 键盘 Tab 到搜索框时，
+ * 唯一的信号是边框从 #3a4856 变成 --accent，在 #31414f 底上只有 1.95:1，
+ * 等于没有。这里收敛成一条全局规则，任何可聚焦元素都自动带上。
+ *
+ * 为什么深色顶栏要单独覆盖一次：--accent (#2f6f9f) 画在顶栏 #222e3a 上
+ * 只有 1.95:1（非文字元素要求 ≥3:1），等于白画；换成 #7fb4dd（与 .brand-icon
+ * 同色，保持视觉一致）后是 6.24:1。浅底上的 --accent 是 4.67–5.39:1，够用。
+ */
+:where(a, button, input, [tabindex]):focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.topbar :where(a, button, input, [tabindex]):focus-visible {
+  outline-color: #7fb4dd;
 }
 
 /* 3D 画布：触摸由脚本完全接管（旋转 / 平移 / 捏合）。
@@ -108,12 +135,14 @@ body {
   display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0;
   position: relative;
 }
-.search-icon { position: absolute; left: 12px; width: 17px; height: 17px; color: #9fb0c0; pointer-events: none; }
+.search-icon { position: absolute; left: 12px; width: 18px; height: 18px; color: #9fb0c0; pointer-events: none; }
 #search {
   flex: 1; min-width: 0; height: 38px;
   padding: 0 12px 0 36px;
   border: 1px solid #3a4856; border-radius: 7px;
-  background: #2c3a48; color: #eef3f8; font-size: 14px; outline: none;
+  /* 原来这里是 `outline: none` —— 键盘用户 Tab 过来只看到边框微微变色（1.95:1），
+     定位不到焦点。去掉后由上面的全局 :focus-visible 接管，画一圈 6.24:1 的浅色环。 */
+  background: #2c3a48; color: #eef3f8; font-size: 14px;
 }
 #search::placeholder { color: #9fb0c0; }
 #search:focus { border-color: var(--accent); background: #31414f; }
@@ -133,7 +162,9 @@ body {
   border: 1px solid var(--accent); background: var(--accent); color: #fff;
   border-radius: 7px; font-size: 13px; cursor: pointer; white-space: nowrap;
 }
-.btn .c-icon, .btn .ph-icon { width: 15px; height: 15px; }
+/* 图标阶梯收敛为 14 / 16 / 18 / 22（DESIGN-RULES §4.3）：
+   按钮与面板头统一 16px。原 15px 是散落的野值，会和大一号的元素视觉不齐。 */
+.btn .c-icon, .btn .ph-icon { width: 16px; height: 16px; }
 .btn:hover { filter: brightness(1.07); }
 .btn:active { transform: translateY(1px); }
 .btn-ghost { background: transparent; color: var(--topbar-ink); border-color: #46566a; }
@@ -157,7 +188,7 @@ body {
   transition: background .12s, border-color .12s;
 }
 .breadcrumb:hover { background: rgba(47, 111, 159, 0.95); border-color: #7fb4dd; }
-.bc-icon { width: 15px; height: 15px; color: #ffce8a; flex: none; }
+.bc-icon { width: 16px; height: 16px; color: #ffce8a; flex: none; }
 .bc-action {
   margin-left: auto; flex: none; font-size: 12px; color: #cfe3f4;
   border-left: 1px solid rgba(255,255,255,0.22); padding-left: 10px;
@@ -345,9 +376,13 @@ body.has-joystick .hint-bar { display: none; }
   pointer-events: none;
 }
 
+/* 面板内唯一水平基准线 = 12px（DESIGN-RULES §4.1）。
+   原值 12px 14px 让"面板头文字左沿"落在 14px，而列表容器是 10px、卡片内边距
+   又叠一层 11px —— 三条互不相关的缩进，看上去就是"没对齐"。
+   统一后：面板头 / 列表容器 / 卡片边框 / selinfo 全在 12px 一条线上。 */
 .panel-head {
   display: flex; align-items: center; justify-content: space-between;
-  padding: 12px 14px; border-bottom: 1px solid var(--line);
+  padding: 12px; border-bottom: 1px solid var(--line);
   font-weight: 600; font-size: 14px;
   flex: none;
 }
@@ -360,11 +395,13 @@ body.has-joystick .hint-bar { display: none; }
   border-radius: 999px; padding: 2px 10px; font-size: 12px; font-weight: 700;
 }
 
-/* 收起按钮：26px 见方，压在面板头的右端。
+/* 收起按钮：28px 见方（原 26px），压在面板头的右端。
+ * 26px 不到触摸目标下限，这里先收敛到设计规则定的 28px；
+ * 真机上还需要 ::before 把命中区扩到 44px（DESIGN-RULES §6.1，本次未做）。
  * 箭头指向"面板要滑去的方向"（桌面/横屏向右、竖屏向下），由媒体查询旋转。 */
 .panel-collapse {
   display: inline-flex; align-items: center; justify-content: center;
-  width: 26px; height: 26px; padding: 0;
+  width: 28px; height: 28px; padding: 0;
   border: 1px solid var(--line-strong); background: #fff; color: var(--muted);
   border-radius: 6px; cursor: pointer;
   transition: background .12s, color .12s, border-color .12s;
@@ -372,7 +409,7 @@ body.has-joystick .hint-bar { display: none; }
 .panel-collapse:hover {
   background: var(--accent-soft); color: var(--accent); border-color: var(--accent);
 }
-.pc-icon { width: 15px; height: 15px; }
+.pc-icon { width: 16px; height: 16px; }
 
 /* ===================== 收起后的常驻标签 =====================
  *
@@ -401,7 +438,7 @@ body.has-joystick .hint-bar { display: none; }
 }
 .panel-tab:hover { border-color: var(--accent); background: var(--accent-soft); }
 .panel-tab:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-.pt-icon { width: 15px; height: 15px; color: var(--accent); flex: none; }
+.pt-icon { width: 16px; height: 16px; color: var(--accent); flex: none; }
 .pt-count {
   background: var(--accent-soft); color: var(--accent-ink);
   border-radius: 999px; padding: 1px 9px; font-size: 12px; font-weight: 700;
@@ -449,7 +486,7 @@ body[data-panel-open='true'] .breadcrumb {
 /* 按钮的位移跟面板**同步**滑：否则会看到"面板先弹进来、按钮再跳一下"，
  * 两段动画错开反而显得卡。 */
 .controls { transition: right .24s cubic-bezier(.32, .72, 0, 1); }
-.results { flex: 1; overflow-y: auto; padding: 10px; min-height: 0; }
+.results { flex: 1; overflow-y: auto; padding: 12px; min-height: 0; }
 
 /* ----------------------------------------------------------------------------
    面板提示块：空态 / 加载态 / 错误态（三态共用一套结构，靠 kind 区分）
@@ -517,7 +554,7 @@ body[data-panel-open='true'] .breadcrumb {
 
 .result-item {
   border: 1px solid var(--line); border-radius: 8px;
-  padding: 9px 11px; margin-bottom: 8px; cursor: pointer; background: #fff;
+  padding: 12px; margin-bottom: 8px; cursor: pointer; background: #fff;
   transition: background .12s, border-color .12s;
 }
 .result-item:hover { background: var(--accent-soft); border-color: var(--accent); }
@@ -526,7 +563,7 @@ body[data-panel-open='true'] .breadcrumb {
 .result-item .rname { font-size: 14px; margin: 3px 0; font-weight: 600; }
 .result-item .rmeta { font-size: 12px; color: var(--muted); line-height: 1.5; }
 .result-item .rtag {
-  display: inline-block; margin-top: 5px; font-size: 11px; color: #b06a00;
+  display: inline-block; margin-top: 5px; font-size: 11px; color: var(--tag-ink);
   border: 1px solid #e6c98a; background: #fbf2dd; border-radius: 4px; padding: 1px 6px;
 }
 .result-item .rzone {
@@ -534,7 +571,7 @@ body[data-panel-open='true'] .breadcrumb {
   font-size: 11px; color: #fff; background: var(--accent); border-radius: 4px; padding: 1px 6px;
 }
 
-.selinfo { border-top: 1px solid var(--line); padding: 12px 14px; font-size: 13px; background: #f7f9fb; }
+.selinfo { border-top: 1px solid var(--line); padding: 12px; font-size: 13px; background: #f7f9fb; }
 .sel-head {
   display: flex; align-items: center; gap: 7px;
   font-weight: 600; color: var(--accent-ink); margin-bottom: 8px;
@@ -545,7 +582,7 @@ body[data-panel-open='true'] .breadcrumb {
 .sel-toggle {
   margin-left: auto; flex: none; font-weight: 400; font-size: 12px;
   color: var(--accent); border: 1px solid var(--line-strong);
-  background: #fff; border-radius: 5px; padding: 2px 8px;
+  background: #fff; border-radius: 6px; padding: 2px 8px;
 }
 /* 收起状态：只剩标题行，把 3D 舞台让出来 */
 .selinfo.collapsed { padding-bottom: 10px; }
